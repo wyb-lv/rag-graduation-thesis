@@ -1,4 +1,8 @@
 .env
 paragraphs.txt
 paragraph_embeddings.txt
-_pycache__
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+.DS_Store

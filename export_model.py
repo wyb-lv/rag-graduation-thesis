@@ -8,8 +8,9 @@ import glob
 import os
 import re
 
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# Allow downloading model if not present in cache
+os.environ.setdefault("HF_HUB_OFFLINE", "0")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")
 
 import scipy.linalg  # noqa: F401  (must load BLAS before torch to avoid a Windows DLL/heap crash)
 import sklearn.metrics.pairwise  # noqa: F401
@@ -21,7 +22,7 @@ from sentence_transformers import SentenceTransformer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = BASE_DIR
-DOCS_DIR = os.path.join(os.path.dirname(BASE_DIR), "sentence_vs_paragraph")
+DOCS_DIR = BASE_DIR
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 EMBED_MODEL = "BAAI/bge-m3"

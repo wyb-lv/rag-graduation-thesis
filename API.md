@@ -5,8 +5,7 @@ API tra loi cau hoi dua tren tai lieu (RAG, phuong phap paragraph). Backend: Fas
 ## Chay local
 
 ```bash
-cd Model
-uvicorn api:app --reload --port 8000
+uv run uvicorn api:app --reload --port 8000
 ```
 
 Base URL mac dinh: `http://localhost:8000`
