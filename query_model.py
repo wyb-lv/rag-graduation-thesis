@@ -28,6 +28,13 @@ load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 EMBED_MODEL = "BAAI/bge-m3"
 TOP_K_PARAGRAPHS = 1
 MIN_INTERVAL = 2.2  # giay giua hai request LLM -> ~27 RPM, chua bien an toan duoi 30
+# Nguong cosine toi thieu de coi cau hoi la co trong tai lieu (do tren bge-m3 + quy_che.pdf:
+# cau trong pham vi >= 0.58, cau ngoai pham vi <= 0.56). Chinh qua bien moi truong SCORE_THRESHOLD.
+SCORE_THRESHOLD = 0.5
+OUT_OF_SCOPE_ANSWER = (
+    "Xin lỗi, câu hỏi này nằm ngoài phạm vi văn bản tôi được cung cấp "
+    "nên tôi không thể trả lời."
+)
 
 PARAGRAPHS_PATH = os.path.join(BASE_DIR, "paragraphs.txt")
 EMBEDDINGS_PATH = os.path.join(BASE_DIR, "paragraph_embeddings.txt")
@@ -107,10 +114,13 @@ def generate_answer(question, hits):
     raise RuntimeError("LLM tra ve 429 lien tuc, thu lai sau")
 
 
-def ask(question, top_k=TOP_K_PARAGRAPHS):
+def ask(question, top_k=TOP_K_PARAGRAPHS, threshold=SCORE_THRESHOLD):
+    """Tra ve (answer, hits, in_scope). Ngoai pham vi tai lieu -> khong goi LLM, hits rong."""
     hits = retrieve(question, top_k)
-    answer = generate_answer(question, hits)
-    return answer, hits
+    relevant = [h for h in hits if h["score"] >= threshold]
+    if not relevant:
+        return OUT_OF_SCOPE_ANSWER, [], False
+    return generate_answer(question, relevant), relevant, True
 
 
 def main():
@@ -129,8 +139,9 @@ def main():
     for question in questions:
         if not question:
             continue
-        answer, hits = ask(question)
-        print("Nguon:", hits[0]["source"], "| score:", round(hits[0]["score"], 4))
+        answer, hits, in_scope = ask(question)
+        if in_scope:
+            print("Nguon:", hits[0]["source"], "| score:", round(hits[0]["score"], 4))
         print(answer)
 
 
