@@ -4,7 +4,8 @@ Chay (trong thu muc Model):
     uvicorn api:app --reload --port 8000
 
 FE goi:
-    POST /ask  { "question": "..." }  ->  { "answer": "...", "sources": [...] }
+    POST /ask  { "question": "..." }  ->  { "answer": "...", "in_scope": true, "sources": [...] }
+    Cau hoi khong co trong tai lieu -> in_scope=false, sources=[], answer la thong bao ngoai pham vi.
 """
 from typing import List
 
@@ -37,6 +38,7 @@ class Source(BaseModel):
 
 class AskResponse(BaseModel):
     answer: str
+    in_scope: bool
     sources: List[Source]
 
 
@@ -52,10 +54,10 @@ def ask(payload: AskRequest):
         raise HTTPException(status_code=400, detail="question khong duoc de trong")
 
     try:
-        answer, hits = qm.ask(question, top_k=payload.top_k)
+        answer, hits, in_scope = qm.ask(question, top_k=payload.top_k)
     except KeyError as e:
         raise HTTPException(status_code=500, detail=f"Thieu bien moi truong: {e}")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Loi khi goi LLM: {e}")
 
-    return AskResponse(answer=answer, sources=[Source(**h) for h in hits])
+    return AskResponse(answer=answer, in_scope=in_scope, sources=[Source(**h) for h in hits])

@@ -42,6 +42,7 @@ Gui cau hoi, nhan cau tra loi cua LLM kem nguon trich dan.
 ```json
 {
   "answer": "Thi sinh duoc dang ky toi da 15 nguyen vong.",
+  "in_scope": true,
   "sources": [
     {
       "source": "quy_che.pdf",
@@ -51,6 +52,21 @@ Gui cau hoi, nhan cau tra loi cua LLM kem nguon trich dan.
   ]
 }
 ```
+
+**Response `200` khi cau hoi nam ngoai pham vi tai lieu** (khong goi LLM, `sources` rong)
+```json
+{
+  "answer": "Xin lỗi, câu hỏi này nằm ngoài phạm vi văn bản tôi được cung cấp nên tôi không thể trả lời.",
+  "in_scope": false,
+  "sources": []
+}
+```
+
+| Field | Type | Ghi chu |
+|---|---|---|
+| `in_scope` | bool | `false` khi khong doan van nao dat nguong tuong dong (cosine < `SCORE_THRESHOLD`) |
+
+Nguong mac dinh `0.57`, doi bang bien moi truong `SCORE_THRESHOLD` trong `.env`. Chi nhung doan van dat nguong moi duoc dua vao ngu canh cho LLM va tra ve trong `sources`.
 
 **Loi**
 
