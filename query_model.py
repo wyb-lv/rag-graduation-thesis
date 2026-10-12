@@ -1,8 +1,8 @@
 """Tra loi cau hoi bang RAG (phuong phap paragraph), dua tren du lieu do export_model.py tao ra.
 
-Doc lai Model/paragraphs.txt va Model/paragraph_embeddings.txt, tim doan van gan nhat
-bang embedding BAAI/bge-m3, roi goi LLM (OpenAI-compatible, vi du Groq) de sinh cau tra loi.
-Day la phan LLM cua compare_sentence_paragraph.ipynb, tach ra thanh script dung lai duoc.
+Tim doan van gan nhat bang embedding BAAI/bge-m3 trong Qdrant (index HNSW, chay bang docker),
+roi goi LLM (OpenAI-compatible, vi du Groq) de sinh cau tra loi.
+Nap du lieu vao Qdrant bang index_qdrant.py (chay docker compose up -d truoc).
 """
 import os
 import re
@@ -16,11 +16,10 @@ import scipy.linalg  # noqa: F401  (must load BLAS before torch to avoid a Windo
 import sklearn.metrics.pairwise  # noqa: F401
 
 import httpx
-import numpy as np
 import torch  # noqa: F401
 from dotenv import load_dotenv
+from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
@@ -29,36 +28,25 @@ EMBED_MODEL = "BAAI/bge-m3"
 TOP_K_PARAGRAPHS = 1
 MIN_INTERVAL = 2.2  # giay giua hai request LLM -> ~27 RPM, chua bien an toan duoi 30
 # Nguong cosine toi thieu de coi cau hoi la co trong tai lieu (do tren bge-m3 + quy_che.pdf:
-# cau trong pham vi >= 0.58, cau ngoai pham vi <= 0.56). Chinh qua bien moi truong SCORE_THRESHOLD.
+# cau trong pham vi >= 0.5, cau ngoai pham vi <= 0.56). Chinh qua bien moi truong SCORE_THRESHOLD.
 SCORE_THRESHOLD = 0.5
 OUT_OF_SCOPE_ANSWER = (
     "Xin lỗi, câu hỏi này nằm ngoài phạm vi văn bản tôi được cung cấp "
     "nên tôi không thể trả lời."
 )
 
-PARAGRAPHS_PATH = os.path.join(BASE_DIR, "paragraphs.txt")
-EMBEDDINGS_PATH = os.path.join(BASE_DIR, "paragraph_embeddings.txt")
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "paragraphs")
+HNSW_EF = int(os.environ.get("HNSW_EF", "128"))  # efSearch: lon hon -> recall cao hon, cham hon
 
 LLM_URL = os.environ["LLM_URL"]
 LLM_MODEL = os.environ["LLM_MODEL"]
 LLM_API_KEY = os.environ["API_KEY"]
 
-_LINE_RE = re.compile(r"^\[\d+\]\s\(([^)]*)\)\s(.*)$")
 _last_call = 0.0
 
 _model = None
-_units = None
-_embeddings = None
-
-
-def load_paragraphs(path=PARAGRAPHS_PATH):
-    units = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            m = _LINE_RE.match(line.rstrip("\n"))
-            if m:
-                units.append({"source": m.group(1), "text": m.group(2)})
-    return units
+_qdrant = None
 
 
 def get_embedding_model():
@@ -69,21 +57,25 @@ def get_embedding_model():
     return _model
 
 
-def get_paragraph_index():
-    global _units, _embeddings
-    if _units is None:
-        _units = load_paragraphs()
-        _embeddings = np.loadtxt(EMBEDDINGS_PATH)
-    return _units, _embeddings
+def get_qdrant():
+    global _qdrant
+    if _qdrant is None:
+        _qdrant = QdrantClient(url=QDRANT_URL)
+    return _qdrant
 
 
 def retrieve(question, top_k=TOP_K_PARAGRAPHS):
-    model = get_embedding_model()
-    units, embeddings = get_paragraph_index()
-    q = model.encode([question], normalize_embeddings=True)
-    scores = cosine_similarity(q, embeddings)[0]
-    idx = np.argsort(scores)[::-1][:top_k]
-    return [{**units[i], "score": float(scores[i])} for i in idx]
+    q = get_embedding_model().encode([question], normalize_embeddings=True)[0]
+    # Distance.COSINE -> score tra ve chinh la cosine, nen SCORE_THRESHOLD giu nguyen y nghia.
+    res = get_qdrant().query_points(
+        QDRANT_COLLECTION,
+        query=q.tolist(),
+        limit=top_k,
+        with_payload=True,
+        search_params=models.SearchParams(hnsw_ef=HNSW_EF),
+    )
+    return [{"source": p.payload["source"], "text": p.payload["text"], "score": float(p.score)}
+            for p in res.points]
 
 
 def generate_answer(question, hits):

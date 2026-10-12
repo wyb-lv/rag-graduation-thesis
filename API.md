@@ -5,8 +5,12 @@ API tra loi cau hoi dua tren tai lieu (RAG, phuong phap paragraph). Backend: Fas
 ## Chay local
 
 ```bash
+docker compose up -d           # Qdrant (HNSW) tai http://localhost:6333, du lieu luu trong docker volume
+uv run python index_qdrant.py # nap paragraphs.txt + paragraph_embeddings.txt vao Qdrant
 uv run uvicorn api:app --reload --port 8000
 ```
+
+Bien moi truong tuy chon: `QDRANT_URL` (mac dinh `http://localhost:6333`), `QDRANT_COLLECTION` (mac dinh `paragraphs`), `HNSW_EF` (efSearch, mac dinh `128`).
 
 Base URL mac dinh: `http://localhost:8000`
 

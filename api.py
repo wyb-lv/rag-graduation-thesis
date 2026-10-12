@@ -58,6 +58,6 @@ def ask(payload: AskRequest):
     except KeyError as e:
         raise HTTPException(status_code=500, detail=f"Thieu bien moi truong: {e}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Loi khi goi LLM: {e}")
+        raise HTTPException(status_code=502, detail=f"Loi khi truy van Qdrant/goi LLM: {e}")
 
     return AskResponse(answer=answer, in_scope=in_scope, sources=[Source(**h) for h in hits])

@@ -6,3 +6,5 @@ __pycache__/
 .venv/
 .idea/
 .DS_Store
+indexing_vector.ipynb
+qdrant_storage/
