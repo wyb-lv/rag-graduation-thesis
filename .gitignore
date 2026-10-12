@@ -1,4 +1,5 @@
 .env
 paragraphs.txt
 paragraph_embeddings.txt
-_pycache_
+/_pycache_
+indexing_vector.ipynb
