@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2.13.5",
     "pymupdf>=1.26.5",
     "python-dotenv>=1.2.1",
+    "qdrant-client>=1.12.1",
     "scikit-learn>=1.6.1",
     "sentence-transformers<3.4.0",
     "torch==2.2.2",
