@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+import json
 
 os.environ.setdefault("HF_HUB_OFFLINE", "0")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")
@@ -74,9 +75,14 @@ def retrieve(question, top_k=TOP_K_PARAGRAPHS):
         with_payload=True,
         search_params=models.SearchParams(hnsw_ef=HNSW_EF),
     )
-    return [{"source": p.payload["source"], "text": p.payload["text"], "score": float(p.score)}
-            for p in res.points]
-
+    return [
+        {
+            "source": p.payload["source"],
+            "text": p.payload["text"],
+            "score": float(p.score)
+        }
+        for p in res.points
+    ]
 
 def generate_answer(question, hits):
     global _last_call
@@ -105,7 +111,6 @@ def generate_answer(question, hits):
         return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
     raise RuntimeError("LLM tra ve 429 lien tuc, thu lai sau")
 
-
 def ask(question, top_k=TOP_K_PARAGRAPHS, threshold=SCORE_THRESHOLD):
     """Tra ve (answer, hits, in_scope). Ngoai pham vi tai lieu -> khong goi LLM, hits rong."""
     hits = retrieve(question, top_k)
@@ -114,6 +119,93 @@ def ask(question, top_k=TOP_K_PARAGRAPHS, threshold=SCORE_THRESHOLD):
         return OUT_OF_SCOPE_ANSWER, [], False
     return generate_answer(question, relevant), relevant, True
 
+def generate_answer_stream(question, hits):
+    global _last_call
+    context = "\n\n".join(f"[Tai lieu: {h['source']}]\n{h['text']}" for h in hits)
+    prompt = (
+        "Tra loi cau hoi bang tieng Viet, ngan gon, chi dua tren ngu canh duoi day. "
+        "Neu ngu canh khong co thong tin, hay noi khong tim thay.\n\n"
+        f"Ngu canh:\n{context}\n\nCau hoi: {question}"
+    )
+
+    # Tinh thoi gian can nghi de tranh 429 Too many req
+    wait = MIN_INTERVAL - (time.monotonic() - _last_call)
+    if wait > 0:
+        time.sleep(wait)
+
+    _last_call = time.monotonic() # cap nhat thoi gian cua lan goi hien tai
+
+    with httpx.stream(
+            "POST",
+            f"{LLM_URL}/chat/completions",
+            timeout=180,
+            headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+            json={
+                "model": LLM_MODEL,
+                "temperature": 0,
+                "max_tokens": 1024,
+                "stream": True,  # Bat che do stream cua Groq
+                "messages": [{"role": "user", "content": prompt}],
+            },
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            line = line.strip() #line = 'data: {"id":"chatcmpl-123","choices":[{"delta":{"content":"Chào"}}]}'
+            if not line or not line.startswith("data: "):
+                continue
+            data_str = line[len("data: "):]
+            if data_str == "[DONE]":
+                break
+            try:
+                data = json.loads(data_str)
+                delta = data["choices"][0]["delta"]
+                content = delta.get("content", "")
+                if content:
+                    # remove <think> if has
+                    cleaned = re.sub(r"</?think>", "", content)
+                    if cleaned:
+                        yield cleaned # tra ve lien tuc
+            except json.JSONDecodeError:
+                continue
+
+def ask_stream(question, top_k=TOP_K_PARAGRAPHS, threshold=SCORE_THRESHOLD):
+    """
+    Generator RAG trả về các event theo chuẩn SSE:
+    1. Gửi nguồn tài liệu (sources) trước.
+    2. Stream từng từ của câu trả lời.
+    3. Gửi tín hiệu hoàn tất [DONE].
+    """
+    hits = retrieve(question, top_k)
+    # [
+    #     {
+    #         "source": "so_tay_sinh_vien.pdf",
+    #         "text": "Sinh viên tích lũy đủ số tín chỉ theo chương trình đào tạo và có điểm rèn luyện từ loại khá trở lên sẽ được xét tốt nghiệp.",
+    #         "score": 0.8415
+    #     },
+    #     {
+    #         "source": "quy_dinh_hoc_vu.pdf",
+    #         "text": "Thời gian tối đa để hoàn thành chương trình đại học là 6 năm đối với hệ đào tạo 4 năm.",
+    #         "score": 0.4231
+    #     }
+    # ]
+    relevant = [h for h in hits if h["score"] >= threshold]
+    # [
+    #     {
+    #         "source": "so_tay_sinh_vien.pdf",
+    #         "text": "Sinh viên tích lũy đủ số tín chỉ theo chương trình đào tạo và có điểm rèn luyện từ loại khá trở lên sẽ được xét tốt nghiệp.",
+    #         "score": 0.8415
+    #     }
+    # ]
+    if not relevant:
+        # out scope
+        yield f"data: {json.dumps({'event': 'sources', 'in_scope': False, 'sources': []}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'event': 'delta', 'text': OUT_OF_SCOPE_ANSWER}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+    yield f"data: {json.dumps({'event': 'sources', 'in_scope': True, 'sources': relevant}, ensure_ascii=False)}\n\n"
+    for token in generate_answer_stream(question, relevant):
+        yield f"data: {json.dumps({'event': 'delta', 'text': token}, ensure_ascii=False)}\n\n"
+    yield "data: [DONE]\n\n"
 
 def main():
     try:
@@ -135,7 +227,6 @@ def main():
         if in_scope:
             print("Nguon:", hits[0]["source"], "| score:", round(hits[0]["score"], 4))
         print(answer)
-
 
 if __name__ == "__main__":
     try:

@@ -8,3 +8,11 @@ __pycache__/
 .DS_Store
 indexing_vector.ipynb
 qdrant_storage/
+.gemini/
+.agents/
+.claude/
+.gitnexus/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+

@@ -12,6 +12,7 @@ from typing import List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from fastapi.responses import StreamingResponse
 
 import query_model as qm
 
@@ -61,3 +62,19 @@ def ask(payload: AskRequest):
         raise HTTPException(status_code=502, detail=f"Loi khi truy van Qdrant/goi LLM: {e}")
 
     return AskResponse(answer=answer, in_scope=in_scope, sources=[Source(**h) for h in hits])
+
+@app.post("/ask/stream")
+def ask_stream(payload: AskRequest):
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question khong duoc de trong")
+
+    return StreamingResponse(
+        qm.ask_stream(question, top_k=payload.top_k),
+        media_type='text/event-stream',
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no", #tat buffer cua nginx neu deploy sau nay
+        }
+    )
