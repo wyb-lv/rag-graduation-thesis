@@ -3,3 +3,9 @@ paragraphs.txt
 paragraph_embeddings.txt
 /_pycache_
 indexing_vector.ipynb
+/db_compare
+.groq_cache/
+.pytest_cache/
+pytest.ini
+tests/
+quy_che.pdf

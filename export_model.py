@@ -1,30 +1,20 @@
 """Xuat ket qua cuoi cung (phuong phap paragraph) tu compare_sentence_paragraph.ipynb.
 
-Tach PDF thanh cac doan van (paragraph), embedding bang BAAI/bge-m3, va luu:
-  - Model/paragraphs.txt          : noi dung tung doan (kem nguon)
-  - Model/paragraph_embeddings.txt: vector embedding tuong ung, moi dong la 1 doan
+Tach PDF thanh cac doan van (paragraph) va luu:
+  - Model/paragraphs.txt: noi dung tung doan (kem nguon)
+Embedding (dense + sparse) do index_qdrant.py tinh khi nap vao Qdrant, nen khong con paragraph_embeddings.txt.
 """
 import glob
 import os
 import re
 
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-
-import scipy.linalg  # noqa: F401  (must load BLAS before torch to avoid a Windows DLL/heap crash)
-import sklearn.metrics.pairwise  # noqa: F401
-
-import numpy as np
 import pymupdf
-import torch  # noqa: F401
-from sentence_transformers import SentenceTransformer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = BASE_DIR
 DOCS_DIR = os.path.join(os.path.dirname(BASE_DIR), "sentence_vs_paragraph")
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-EMBED_MODEL = "BAAI/bge-m3"
 MAX_PARAGRAPH_CHARS = 700
 
 
@@ -72,22 +62,12 @@ def main():
             paragraph_units.append({"text": p, "source": os.path.basename(path)})
     print(f"{len(paragraph_units)} paragraphs")
 
-    model = SentenceTransformer(EMBED_MODEL)
-    model.max_seq_length = 512
-    embeddings = model.encode(
-        [u["text"] for u in paragraph_units], normalize_embeddings=True
-    )
-
     paragraphs_path = os.path.join(MODEL_DIR, "paragraphs.txt")
     with open(paragraphs_path, "w", encoding="utf-8") as f:
         for i, u in enumerate(paragraph_units):
             f.write(f"[{i}] ({u['source']}) {u['text']}\n")
 
-    embeddings_path = os.path.join(MODEL_DIR, "paragraph_embeddings.txt")
-    np.savetxt(embeddings_path, embeddings, fmt="%.8f")
-
     print("Saved:", paragraphs_path)
-    print("Saved:", embeddings_path, "shape:", embeddings.shape)
 
 
 if __name__ == "__main__":
