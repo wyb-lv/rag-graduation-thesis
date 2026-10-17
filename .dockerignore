@@ -13,3 +13,4 @@ Dockerfile
 .dockerignore
 docker-compose.yml
 API.md
+.venv/

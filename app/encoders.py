@@ -15,8 +15,8 @@ from huggingface_hub import snapshot_download
 from qdrant_client import models
 from transformers import AutoTokenizer
 
-import config as cfg
-from jina_reranker_modeling import JinaForRanking
+from . import config as cfg
+from .jina_reranker_modeling import JinaForRanking
 
 _embedder = None
 _reranker = None

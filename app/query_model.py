@@ -12,9 +12,9 @@ from datetime import date, datetime, time
 
 from qdrant_client import QdrantClient, models
 
-import config as cfg
-import encoders
-import groq_client
+from . import config as cfg
+from . import encoders
+from . import groq_client
 
 NO_RESULT_ANSWER = "Không tìm thấy quy định liên quan đến câu hỏi trong các văn bản được cung cấp."
 
