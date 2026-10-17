@@ -6,7 +6,7 @@ import os
 
 from dotenv import load_dotenv
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 
@@ -18,7 +18,7 @@ def _env_bool(name, default):
 
 
 # ---- Du lieu nguon (do export_model.py tao ra) ----
-PARAGRAPHS_PATH = os.path.join(BASE_DIR, "paragraphs.txt")
+PARAGRAPHS_PATH = os.path.join(BASE_DIR, "data", "paragraphs.txt")
 
 # ---- Model (tai mot lan moi tien trinh, xem encoders.py) ----
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")

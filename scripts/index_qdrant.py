@@ -5,12 +5,17 @@ Collection cu (QDRANT_LEGACY_COLLECTION) khong bi ghi/xoa.
 Chay: python index_qdrant.py [--recreate]   (docker compose up -d truoc)
 """
 import argparse
+import os
 import re
 import sys
 
+# Root project
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
 from qdrant_client import QdrantClient, models
 
-import config as cfg
+from app import config as cfg
 
 _LINE_RE = re.compile(r"^\[\d+\]\s\(([^)]*)\)\s(.*)$")
 
@@ -67,7 +72,7 @@ def create_payload_indexes(client, name):
 
 def ingest(client, name, units):
     # Import muon: cac buoc tao collection/index o tren khong can nap model.
-    import encoders
+    from app import encoders
 
     batch = cfg.UPSERT_BATCH_SIZE
     for start in range(0, len(units), batch):

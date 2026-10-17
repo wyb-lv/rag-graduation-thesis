@@ -1,11 +1,34 @@
+# Môi trường ảo & Khóa bí mật
 .env
-paragraphs.txt
-paragraph_embeddings.txt
-/_pycache_
-indexing_vector.ipynb
-/db_compare
+.venv/
+env/
+venv/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Hệ điều hành & IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Cache dữ liệu RAG & Test
 .groq_cache/
 .pytest_cache/
-pytest.ini
-tests/
-quy_che.pdf
+db_compare/
+indexing_vector.ipynb
+paragraph_embeddings.txt
+data/paragraphs.txt
+
+# GitNexus & AI Assistant local
+.gitnexus/
+.agents/
+.claude/
+
+# md
+AGENTS.md
+CLAUDE.md
+GEMINI.md

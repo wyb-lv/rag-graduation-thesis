@@ -27,9 +27,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-import config as cfg
-import encoders
-import query_model as qm
+from . import config as cfg
+from . import encoders
+from . import query_model as qm
 
 log = logging.getLogger("uvicorn.error")
 _warmup = {"status": "disabled" if not cfg.WARMUP else "pending"}

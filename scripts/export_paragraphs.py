@@ -7,13 +7,16 @@ Embedding (dense + sparse) do index_qdrant.py tinh khi nap vao Qdrant, nen khong
 import glob
 import os
 import re
+import sys
+
+# Root project = thu muc cha cua scripts/
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
 import pymupdf
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR = BASE_DIR
-DOCS_DIR = os.path.join(os.path.dirname(BASE_DIR), "sentence_vs_paragraph")
-os.makedirs(MODEL_DIR, exist_ok=True)
+DOCS_DIR = os.path.join(ROOT, "data", "docs")
+OUTPUT_PATH = os.path.join(ROOT, "data", "paragraphs.txt")
 
 MAX_PARAGRAPH_CHARS = 700
 
@@ -54,20 +57,16 @@ def build_paragraphs(blocks, max_chars=MAX_PARAGRAPH_CHARS):
 def main():
     doc_paths = sorted(glob.glob(os.path.join(DOCS_DIR, "*.pdf")))
     print("Documents:", doc_paths)
-
     paragraph_units = []
     for path in doc_paths:
         blocks = load_blocks(path)
         for p in build_paragraphs(blocks):
             paragraph_units.append({"text": p, "source": os.path.basename(path)})
     print(f"{len(paragraph_units)} paragraphs")
-
-    paragraphs_path = os.path.join(MODEL_DIR, "paragraphs.txt")
-    with open(paragraphs_path, "w", encoding="utf-8") as f:
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         for i, u in enumerate(paragraph_units):
             f.write(f"[{i}] ({u['source']}) {u['text']}\n")
-
-    print("Saved:", paragraphs_path)
+    print("Saved:", OUTPUT_PATH)
 
 
 if __name__ == "__main__":
