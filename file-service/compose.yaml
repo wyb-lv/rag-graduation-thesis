@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: file-service-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-file_service}
+      POSTGRES_USER: ${POSTGRES_USER:-file_service}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: file-service-rabbitmq
+    # Dữ liệu RabbitMQ gắn với hostname, cố định để không mất hàng đợi khi tạo lại container
+    hostname: file-service-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-file_service}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-secret}
+    ports:
+      - "5672:5672"
+      # Giao diện quản trị: http://localhost:15672
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # minio/minio đã bị gỡ khỏi Docker Hub và Quay; dùng bản Chainguard (miễn phí, chỉ có tag latest)
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    container_name: file-service-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-file_service}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-file_service_secret}
+    ports:
+      - "9000:9000"
+      # Giao diện quản trị: http://localhost:9001
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  file-service:
+    build: .
+    image: file-service:latest
+    container_name: file-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-file_service}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-file_service}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-file_service}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-secret}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_USER:-file_service}
+      MINIO_SECRET_KEY: ${MINIO_PASSWORD:-file_service_secret}
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  minio_data:

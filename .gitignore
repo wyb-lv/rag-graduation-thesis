@@ -1,34 +1,59 @@
-# Môi trường ảo & Khóa bí mật
+# ── Build output / thư viện nặng ──
+target/
+build/
+out/
+*.jar
+*.war
+*.class
+.mvn/wrapper/maven-wrapper.jar
+node_modules/
+tessdata/
+*.traineddata
+
+# ── File nhạy cảm ──
 .env
-.venv/
-env/
-venv/
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+secrets/
+application-local.*
+application-secret*.*
 
-# Python cache & compiled files
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
+# ── Dữ liệu runtime ──
+uploads/
+*.log
+logs/
+HELP.md
 
-# Hệ điều hành & IDE
-.DS_Store
+# ── IDE / OS ──
 .idea/
+*.iml
+*.iws
+*.ipr
 .vscode/
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated
+.sts4-cache
+.springBeans
+.DS_Store
+Thumbs.db
 
-# Cache dữ liệu RAG & Test
-.groq_cache/
-.pytest_cache/
-db_compare/
-indexing_vector.ipynb
-paragraph_embeddings.txt
-data/paragraphs.txt
+# ── Tài liệu & Markdown ──
+*.md
 
-# GitNexus & AI Assistant local
-.gitnexus/
-.agents/
+# ── Công cụ AI cục bộ ──
 .claude/
-
-# md
-AGENTS.md
 CLAUDE.md
-GEMINI.md
+.agents/
+.agents
+**/.agents
+**/.agents/
+.cursor/
+.gemini/

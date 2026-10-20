@@ -1,0 +1,15 @@
+target/
+uploads/
+tessdata/
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+*.iml
+HELP.md
+Dockerfile
+.dockerignore
+compose.yaml
+.env
+.env.example

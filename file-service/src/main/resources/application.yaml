@@ -1,0 +1,87 @@
+spring:
+  application:
+    name: file-service
+
+  # Java 21: xử lý request HTTP (Tomcat) bằng virtual thread.
+  # OCR vẫn chạy trên platform thread riêng (RabbitMQConfig) vì là việc nặng CPU + gọi native.
+  threads:
+    virtual:
+      enabled: true
+
+  # Giá trị mặc định dùng khi chạy từ IDE/mvn với Postgres của compose.yaml
+  # (docker compose up -d postgres; publish ra host cổng 5433 để không đụng Postgres cài sẵn ở 5432).
+  # Trong container được ghi đè bằng biến môi trường
+  # SPRING_DATASOURCE_URL / SPRING_DATASOURCE_USERNAME / SPRING_DATASOURCE_PASSWORD.
+  datasource:
+    url: jdbc:postgresql://localhost:5433/file_service
+    username: file_service
+    password: secret
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+  # Trong container ghi đè bằng SPRING_RABBITMQ_HOST / _USERNAME / _PASSWORD
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: file_service
+    password: secret
+    connection-timeout: 5s
+    # Confirm + returns + mandatory: chỉ coi là đã xếp hàng khi broker xác nhận, message không route được thì bị trả lại
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        # Hết lượt retry thì job vào dead-letter queue
+        retry:
+          enabled: true
+          max-retries: 3
+          initial-interval: 2s
+          multiplier: 2
+          max-interval: 30s
+
+  servlet:
+    multipart:
+      # -1 = không giới hạn dung lượng file/request upload
+      max-file-size: -1
+      max-request-size: -1
+
+  # compose.yaml chứa cả service file-service nên không để Spring Boot tự `docker compose up`
+  docker:
+    compose:
+      enabled: false
+
+server:
+  port: 8080
+
+minio:
+  # Trong container ghi đè bằng MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY. Bucket tự được tạo nếu chưa có
+  endpoint: http://localhost:9000
+  access-key: file_service
+  secret-key: file_service_secret
+  bucket: documents
+
+ocr:
+  # Thư mục chứa <lang>.traineddata. Trong container: OCR_TESSDATA_PATH=/usr/share/tesseract-ocr/5/tessdata
+  tessdata-path: ./tessdata
+  language: vie+eng
+  # Độ phân giải render trang PDF scan trước khi OCR
+  dpi: 300
+  # Trang PDF có ít hơn số ký tự này (không tính khoảng trắng) được coi là trang scan và sẽ OCR
+  min-text-chars: 20
+  # Số file OCR song song (số consumer của queue OCR)
+  threads: 2
+  publish-confirm-timeout: 5s
+  # Chu kỳ quét tài liệu chưa vào được hàng đợi để gửi lại
+  recovery-initial-delay: PT10S
+  recovery-interval: PT30S
+
+# Sau khi OCR xong, tự động publish embed job sang ai-service qua RabbitMQ.
+# Tắt nếu không dùng ai-service hoặc muốn embed thủ công (POST /api/documents/{id}/embed).
+embed:
+  enabled: ${EMBED_ENABLED:true}
+
