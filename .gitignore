@@ -20,8 +20,6 @@ __pycache__/
 .pytest_cache/
 db_compare/
 indexing_vector.ipynb
-paragraph_embeddings.txt
-data/paragraphs.txt
 
 # GitNexus & AI Assistant local
 .gitnexus/
