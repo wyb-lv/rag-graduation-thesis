@@ -1,0 +1,59 @@
+# ── Build output / thư viện nặng ──
+target/
+build/
+out/
+*.jar
+*.war
+*.class
+.mvn/wrapper/maven-wrapper.jar
+node_modules/
+tessdata/
+*.traineddata
+
+# ── File nhạy cảm ──
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+secrets/
+application-local.*
+application-secret*.*
+
+# ── Dữ liệu runtime ──
+uploads/
+*.log
+logs/
+HELP.md
+
+# ── IDE / OS ──
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated
+.sts4-cache
+.springBeans
+.DS_Store
+Thumbs.db
+
+# ── Tài liệu & Markdown ──
+*.md
+
+# ── Công cụ AI cục bộ ──
+.claude/
+CLAUDE.md
+.agents/
+.agents
+**/.agents
+**/.agents/
+.cursor/
+.gemini/

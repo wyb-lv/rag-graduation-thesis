@@ -1,0 +1,16 @@
+.env
+.git
+.gitignore
+.groq_cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+tests/
+pytest.ini
+*.ipynb
+db_compare/
+Dockerfile
+.dockerignore
+docker-compose.yml
+API.md
+.venv/
