@@ -1,0 +1,33 @@
+name: auth-service
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-document-auth
+    restart: always
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-change_me_auth_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  auth-service:
+    build: .
+    container_name: auth-service
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "8081:8081"   # REST Port
+      - "9091:9091"   # gRPC Port (Mới bổ sung)
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${AUTH_DB_PASSWORD:-change_me_auth_db}
+      GRPC_SERVER_PORT: 9091
+
+volumes:
+  postgres_data:

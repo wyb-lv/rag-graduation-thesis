@@ -1,0 +1,32 @@
+# Môi trường ảo & Khóa bí mật
+.env
+.venv/
+env/
+venv/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Hệ điều hành & IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Cache dữ liệu RAG & Test
+.groq_cache/
+.pytest_cache/
+db_compare/
+indexing_vector.ipynb
+
+# GitNexus & AI Assistant local
+.gitnexus/
+.agents/
+.claude/
+
+# md
+AGENTS.md
+CLAUDE.md
+GEMINI.md

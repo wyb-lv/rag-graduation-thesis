@@ -1,0 +1,96 @@
+spring:
+  application:
+    name: api-gateway
+  threads:
+    virtual:
+      enabled: true
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+          # ── Auth Service: xác thực & người dùng ─────────────────────────
+          - id: auth-service
+            uri: ${AUTH_SERVICE_URL:http://localhost:8081}
+            predicates:
+              - Path=/api/auth/**
+
+          # ── File Service: quản lý tài liệu ──────────────────────────────
+          - id: file-service
+            uri: ${FILE_SERVICE_URL:http://localhost:8080}
+            predicates:
+              - Path=/api/documents/**
+
+          # ── AI Service: hỏi đáp RAG ─────────────────────────────────────
+          # Route với prefix /api/ai/**
+          - id: ai-service-ask
+            uri: ${AI_SERVICE_URL:http://localhost:8000}
+            predicates:
+              - Path=/api/ai/ask, /api/ai/ask/stream
+            filters:
+              - StripPrefix=2
+
+          - id: ai-service-health
+            uri: ${AI_SERVICE_URL:http://localhost:8000}
+            predicates:
+              - Path=/api/ai/health
+            filters:
+              - StripPrefix=2
+
+          # Embed: POST /api/ai/embed → ai-service POST /embed
+          # Delete vectors: DELETE /api/ai/embed/{id} → ai-service DELETE /embed/{id}
+          - id: ai-service-embed
+            uri: ${AI_SERVICE_URL:http://localhost:8000}
+            predicates:
+              - Path=/api/ai/embed, /api/ai/embed/**
+            filters:
+              - StripPrefix=2
+server:
+  port: ${SERVER_PORT:9090}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,metrics
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      access: unrestricted
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: HSU Chatbot API Gateway
+    version: 1.0.0
+    description: API Gateway proxy cho file-service và ai-service
+
+gateway:
+  # Cấu hình rate limiting (in-memory token bucket, mỗi IP)
+  rate-limit:
+    # Requests per second được phép
+    ai-service-rps: ${GATEWAY_AI_RPS:10}
+    file-service-rps: ${GATEWAY_FILE_RPS:20}
+    auth-service-rps: ${GATEWAY_AUTH_RPS:5}
+
+    # Burst tối đa
+    ai-service-burst: ${GATEWAY_AI_BURST:20}
+    file-service-burst: ${GATEWAY_FILE_BURST:40}
+    auth-service-burst: ${GATEWAY_AUTH_BURST:5}
+
+  cors:
+    allowed-origins: ${GATEWAY_CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:5174}
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.hsu.gateway: DEBUG
+
+grpc:
+  client:
+    auth-service:
+      address: 'static://${AUTH_GRPC_HOST:localhost}:${AUTH_GRPC_PORT:9091}'
+      negotiation-type: plaintext
