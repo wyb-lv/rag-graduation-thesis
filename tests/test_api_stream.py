@@ -4,9 +4,9 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-import api
-import groq_client
-import query_model as qm
+from app import api
+from app.llm import groq_client
+from app.rag import query_model as qm
 
 HIT = {
     "source": "quy_che.pdf",

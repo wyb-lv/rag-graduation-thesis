@@ -23,15 +23,13 @@ from datetime import date
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import config as cfg
-from . import encoders
-from . import query_model as qm
-from . import embed_service
-from . import embed_consumer
+from .ingest import embed_consumer, embed_service
+from .models import encoders
+from .rag import query_model as qm
 
 log = logging.getLogger("uvicorn.error")
 _warmup = {"status": "disabled" if not cfg.WARMUP else "pending"}
@@ -65,13 +63,8 @@ async def lifespan(app):
 
 
 app = FastAPI(title="RAG QA API", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Không thêm CORSMiddleware: api-gateway đã gắn CORS, thêm ở đây thì response có 2 header
+# Access-Control-Allow-Origin và trình duyệt chặn fetch.
 
 
 class AskRequest(BaseModel):
@@ -80,6 +73,7 @@ class AskRequest(BaseModel):
     mode: Optional[Literal["dense", "hybrid", "hybrid_rerank"]] = None  # mac dinh RAG_MODE
     kho: Optional[str] = None
     reference_date: Optional[date] = None  # loc van ban con hieu luc tai ngay nay; mac dinh hom nay
+    khoa: Optional[int] = Field(default=None, ge=1990, le=2100)  # khoa cua sinh vien; chi lay van ban ap dung cho khoa nay
 
 
 class Source(BaseModel):
@@ -141,6 +135,7 @@ def ask(payload: AskRequest):
             mode=payload.mode,
             kho=payload.kho,
             reference_date=payload.reference_date,
+            khoa=payload.khoa,
         )
     return AskResponse(answer=answer, in_scope=in_scope, sources=_sources(hits))
 
@@ -165,6 +160,7 @@ def ask_stream(payload: AskRequest):
             mode=payload.mode,
             kho=payload.kho,
             reference_date=payload.reference_date,
+            khoa=payload.khoa,
         )
         chunks = qm.generate_answer_stream(question, hits) if hits else iter([qm.NO_RESULT_ANSWER])
     sources = [s.model_dump() for s in _sources(hits)]

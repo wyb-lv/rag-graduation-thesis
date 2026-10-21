@@ -10,7 +10,7 @@ from collections import deque
 
 import groq
 
-from . import config as cfg
+from .. import config as cfg
 
 
 class GroqError(RuntimeError):

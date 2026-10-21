@@ -22,10 +22,10 @@ PARAGRAPHS_PATH = os.path.join(BASE_DIR, "data", "paragraphs.txt")
 
 # ---- Model (tai mot lan moi tien trinh, xem encoders.py) ----
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
-# Reranker listwise nap qua transformers bang jina_reranker_modeling.py (ban sao da duyet, khong trust_remote_code).
+# Reranker listwise nap qua transformers bang models/jina_reranker_modeling.py (ban sao da duyet, khong trust_remote_code).
 # Giay phep CC BY-NC 4.0 (phi thuong mai).
 RERANK_MODEL = os.environ.get("RERANK_MODEL", "jinaai/jina-reranker-v3.5")
-# Weights/config/tokenizer lay dung revision nay, va jina_reranker_modeling.py la ban sao modeling.py o revision nay.
+# Weights/config/tokenizer lay dung revision nay, va models/jina_reranker_modeling.py la ban sao modeling.py o revision nay.
 # Doi revision = duyet lai modeling.py moi va vendor lai.
 RERANK_REVISION = os.environ.get(
     "RERANK_REVISION",
@@ -71,6 +71,9 @@ FIELD_KHO = os.environ.get("PAYLOAD_FIELD_KHO", "kho")
 FIELD_DOI_TUONG = os.environ.get("PAYLOAD_FIELD_DOI_TUONG", "doi_tuong")
 FIELD_HIEU_LUC_TU = os.environ.get("PAYLOAD_FIELD_HIEU_LUC_TU", "hieu_luc_tu")
 FIELD_HIEU_LUC_DEN = os.environ.get("PAYLOAD_FIELD_HIEU_LUC_DEN", "hieu_luc_den")
+# Khoa ap dung cua van ban (so nguyen, de trong = ap dung moi khoa); loc theo khoa cua sinh vien.
+FIELD_KHOA_TU = os.environ.get("PAYLOAD_FIELD_KHOA_TU", "khoa_tu")
+FIELD_KHOA_DEN = os.environ.get("PAYLOAD_FIELD_KHOA_DEN", "khoa_den")
 
 # ---- Pipeline ----
 TOP_K_RETRIEVAL = int(os.environ.get("TOP_K_RETRIEVAL", "20"))

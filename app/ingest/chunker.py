@@ -1,6 +1,6 @@
 """Làm sạch văn bản OCR của quy chế/quy định và chia chunk theo cấu trúc Chương -> Điều -> khoản -> điểm.
 
-Văn bản đầu vào thường là PDF scan được OCR (Tesseract) nên có nhiễu: trang bìa Quyết định, mục lục,
+Văn bản đầu vào thường là PDF scan được OCR nên có nhiễu: trang bìa Quyết định, mục lục,
 header/footer lặp mỗi trang, số trang, và rác sinh ra từ con dấu/chữ ký/hình vẽ/sơ đồ.
 Mỗi chunk được gắn tiền tố "[Tên tài liệu – Chương – Điều]" để embedding và câu trả lời biết ngữ cảnh.
 """
@@ -197,7 +197,7 @@ def _merge_tiny(chunks: list[Chunk]) -> list[Chunk]:
 
 
 def infer_metadata(source: str) -> dict:
-    """Suy ra loại văn bản và khóa áp dụng từ tên tài liệu."""
+    """Suy ra loại văn bản và khóa áp dụng (khoa_tu..khoa_den, thiếu = không giới hạn) từ tên tài liệu."""
     s = source.lower()
     if re.match(r"(thông báo|tb\d*\b)", s):
         loai = "thong_bao"
@@ -212,7 +212,15 @@ def infer_metadata(source: str) -> dict:
     else:
         loai = "khac"
     meta = {"loai_van_ban": loai}
-    m = re.search(r"kh[oó]a\s*(\d{4}(?:\s*[,\-–]\s*\d{4})*)", s)
+    m = re.search(r"kh[oó][aáà]\s*(\d{4}(?:\s*[,\-–]\s*\d{4})*)(.{0,25})", s)
     if m:
+        years = [int(y) for y in re.findall(r"\d{4}", m.group(1))]
         meta["khoa"] = re.sub(r"\s+", "", m.group(1))
+        after, before = m.group(2), s[:m.start()]
+        if "trở về trước" in after:
+            meta["khoa_den"] = max(years)
+        elif "trở đi" in after or "trở về sau" in after or before.rstrip().endswith("từ"):
+            meta["khoa_tu"] = min(years)
+        else:
+            meta["khoa_tu"], meta["khoa_den"] = min(years), max(years)
     return meta

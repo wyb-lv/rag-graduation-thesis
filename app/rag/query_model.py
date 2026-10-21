@@ -12,9 +12,9 @@ from datetime import date, datetime, time
 
 from qdrant_client import QdrantClient, models
 
-from . import config as cfg
-from . import encoders
-from . import groq_client
+from .. import config as cfg
+from ..llm import groq_client
+from ..models import encoders
 
 NO_RESULT_ANSWER = "Không tìm thấy quy định liên quan đến câu hỏi trong các văn bản được cung cấp."
 
@@ -48,16 +48,17 @@ def _to_datetime(value):
     return datetime.fromisoformat(value)
 
 
-def _open_bound(field, date_range):
-    """Dieu kien theo moc ngay; thieu field/null (moc de trong) coi nhu khong gioi han."""
+def _open_bound(field, bound):
+    """Dieu kien theo moc (ngay hoac so); thieu field/null (moc de trong) coi nhu khong gioi han."""
     return models.Filter(should=[
         models.IsEmptyCondition(is_empty=models.PayloadField(key=field)),
-        models.FieldCondition(key=field, range=date_range),
+        models.FieldCondition(key=field, range=bound),
     ])
 
 
-def build_filter(kho=None, reference_date=None):
-    """Filter payload: dung kho (neu co) va van ban con hieu luc tai `reference_date` (mac dinh hom nay)."""
+def build_filter(kho=None, reference_date=None, khoa=None):
+    """Filter payload: dung kho (neu co), van ban con hieu luc tai `reference_date` (mac dinh hom nay)
+    va, neu co `khoa` cua sinh vien, chi van ban ap dung cho khoa do (hoac khong gioi han khoa)."""
     ref = _to_datetime(reference_date or date.today())
     must = [
         _open_bound(cfg.FIELD_HIEU_LUC_TU, models.DatetimeRange(lte=ref)),
@@ -65,17 +66,22 @@ def build_filter(kho=None, reference_date=None):
     ]
     if kho:
         must.insert(0, models.FieldCondition(key=cfg.FIELD_KHO, match=models.MatchValue(value=kho)))
+    if khoa:
+        must += [
+            _open_bound(cfg.FIELD_KHOA_TU, models.Range(lte=khoa)),
+            _open_bound(cfg.FIELD_KHOA_DEN, models.Range(gte=khoa)),
+        ]
     return models.Filter(must=must)
 
 
-def retrieve(question, mode=None, kho=None, reference_date=None, top_k=None):
+def retrieve(question, mode=None, kho=None, reference_date=None, top_k=None, khoa=None):
     """Tim `top_k` (mac dinh top_k_retrieval) ung vien; moi hit: id, source, text, payload, retrieval/rerank_score."""
     mode = _check_mode(mode)
     top_k = top_k or cfg.TOP_K_RETRIEVAL
     dense_vecs, lexical = encoders.encode_texts([question])
     dense = dense_vecs[0].tolist()
     sparse = encoders.to_sparse_vector(lexical[0])
-    flt = build_filter(kho, reference_date)
+    flt = build_filter(kho, reference_date, khoa)
     ef = models.SearchParams(hnsw_ef=cfg.HNSW_EF)
 
     if mode == "dense" or not sparse.indices:  # cau hoi khong co token sparse -> chi dung nhanh dense
@@ -150,19 +156,19 @@ def generate_answer_stream(question, hits):
     return groq_client.chat_stream(build_messages(question, hits))
 
 
-def find_hits(question, top_k=None, mode=None, kho=None, reference_date=None):
+def find_hits(question, top_k=None, mode=None, kho=None, reference_date=None, khoa=None):
     """Truy van + rerank + loc nguong: cac doan se dua vao LLM. Rong = cau hoi ngoai pham vi tai lieu."""
     mode = _check_mode(mode)
     top_k = top_k or cfg.TOP_K_RERANK
-    hits = retrieve(question, mode, kho, reference_date)
+    hits = retrieve(question, mode, kho, reference_date, khoa=khoa)
     if hits and mode == "hybrid_rerank":
         hits = rerank(question, hits, top_k)
     return [h for h in hits[:top_k] if _relevant(h, mode)]
 
 
-def ask(question, top_k=None, mode=None, kho=None, reference_date=None):
+def ask(question, top_k=None, mode=None, kho=None, reference_date=None, khoa=None):
     """Tra ve (answer, hits, in_scope). Khong con doan nao sau loc/nguong -> khong goi Groq, hits rong."""
-    hits = find_hits(question, top_k, mode, kho, reference_date)
+    hits = find_hits(question, top_k, mode, kho, reference_date, khoa)
     if not hits:
         return NO_RESULT_ANSWER, [], False
     return generate_answer(question, hits), hits, True
@@ -178,6 +184,7 @@ def main():
     parser.add_argument("question", nargs="*", help="cau hoi; bo trong de nhap tuong tac")
     parser.add_argument("--mode", choices=cfg.RAG_MODES, default=None, help=f"mac dinh: {cfg.RAG_MODE}")
     parser.add_argument("--kho", default=None, help="chi tim trong kho nay")
+    parser.add_argument("--khoa", type=int, default=None, help="khoa cua sinh vien (vd 2024): loc van ban ap dung cho khoa nay")
     parser.add_argument(
         "--date", dest="reference_date", default=None, help="ngay tham chieu YYYY-MM-DD (mac dinh hom nay)"
     )
@@ -192,7 +199,7 @@ def main():
     for question in questions:
         if not question:
             continue
-        answer, hits, _ = ask(question, mode=args.mode, kho=args.kho, reference_date=args.reference_date)
+        answer, hits, _ = ask(question, mode=args.mode, kho=args.kho, reference_date=args.reference_date, khoa=args.khoa)
         for h in hits:
             score = h["rerank_score"] if h["rerank_score"] is not None else h["retrieval_score"]
             print(f"Nguon: {h['source']} | score: {score:.4f}")

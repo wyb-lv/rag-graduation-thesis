@@ -14,9 +14,9 @@ from typing import Optional
 
 from qdrant_client import QdrantClient, models
 
-from . import config as cfg
+from .. import config as cfg
+from ..models import encoders
 from . import chunker
-from . import encoders
 
 log = logging.getLogger("uvicorn.error")
 
@@ -35,6 +35,8 @@ def _ensure_collection(client: QdrantClient):
     """Tạo collection nếu chưa tồn tại."""
     existing = {c.name for c in client.get_collections().collections}
     if cfg.QDRANT_COLLECTION in existing:
+        for field in (cfg.FIELD_KHOA_TU, cfg.FIELD_KHOA_DEN):  # idempotent; bổ sung cho collection tạo trước đây
+            client.create_payload_index(cfg.QDRANT_COLLECTION, field_name=field, field_schema=models.PayloadSchemaType.INTEGER)
         return
     log.info("Tạo collection '%s'...", cfg.QDRANT_COLLECTION)
     client.create_collection(
@@ -66,6 +68,12 @@ def _ensure_collection(client: QdrantClient):
             cfg.QDRANT_COLLECTION,
             field_name=field,
             field_schema=models.PayloadSchemaType.DATETIME,
+        )
+    for field in (cfg.FIELD_KHOA_TU, cfg.FIELD_KHOA_DEN):
+        client.create_payload_index(
+            cfg.QDRANT_COLLECTION,
+            field_name=field,
+            field_schema=models.PayloadSchemaType.INTEGER,
         )
 
 
@@ -104,6 +112,8 @@ def embed_document(
 
     client = _get_qdrant()
     _ensure_collection(client)
+    # Embed lại (sau OCR lại) phải thay vector cũ, không được chồng lên
+    delete_document_vectors(document_id)
 
     total_upserted = 0
     for batch_start in range(0, len(paragraphs), cfg.UPSERT_BATCH_SIZE):

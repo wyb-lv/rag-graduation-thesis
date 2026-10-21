@@ -1,4 +1,4 @@
-from app.chunker import chunk_document, infer_metadata
+from app.ingest.chunker import chunk_document, infer_metadata
 
 SAMPLE = """BỘ GIÁO DỤC VÀ ĐÀO TẠO
 QUYẾT ĐỊNH
@@ -40,5 +40,16 @@ def test_unstructured_notice_becomes_single_chunk():
 
 
 def test_infer_metadata():
-    assert infer_metadata("Quy định học và CĐR tiếng Anh Khóa 2024 (cập nhật)") == {"loai_van_ban": "quy_dinh", "khoa": "2024"}
+    assert infer_metadata("Quy định học và CĐR tiếng Anh Khóa 2024 (cập nhật)") == {
+        "loai_van_ban": "quy_dinh", "khoa": "2024", "khoa_tu": 2024, "khoa_den": 2024}
     assert infer_metadata("Thông báo 70/TB")["loai_van_ban"] == "thong_bao"
+
+
+def test_infer_khoa_range():
+    assert infer_metadata("Quy định X Khóa 2024")["khoa_tu"] == infer_metadata("Quy định X Khóa 2024")["khoa_den"] == 2024
+    only_from = infer_metadata("Quy định X từ Khóa 2026 trở về sau")
+    assert only_from["khoa_tu"] == 2026 and "khoa_den" not in only_from
+    only_to = infer_metadata("Quy chế (Khóa 2020 trở về trước)")
+    assert only_to["khoa_den"] == 2020 and "khoa_tu" not in only_to
+    assert (lambda m: (m["khoa_tu"], m["khoa_den"]))(infer_metadata("Quy định Tiếng Anh khóa 2018, 2019")) == (2018, 2019)
+    assert "khoa_tu" not in infer_metadata("Quy định điểm danh tham dự lớp học")

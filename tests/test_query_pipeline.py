@@ -5,9 +5,9 @@ import numpy as np
 import pytest
 from qdrant_client import models
 
-import config as cfg
-import encoders
-import query_model as qm
+from app import config as cfg
+from app.models import encoders
+from app.rag import query_model as qm
 
 
 class FakeQdrant:

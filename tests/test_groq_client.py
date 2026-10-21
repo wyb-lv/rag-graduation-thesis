@@ -2,8 +2,8 @@ import groq
 import httpx
 import pytest
 
-import config as cfg
-import groq_client
+from app import config as cfg
+from app.llm import groq_client
 
 MESSAGES = [{"role": "system", "content": "s"}, {"role": "user", "content": "Câu hỏi?"}]
 
