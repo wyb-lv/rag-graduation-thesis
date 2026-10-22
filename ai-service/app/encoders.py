@@ -31,11 +31,7 @@ def _device(configured):
 
 
 def _embedder_path():
-    """Thu muc local cua BGE-M3 chi gom file can cho suy luan.
-
-    FlagEmbedding tu snapshot_download ca repo (them ~2GB ONNX/anh) va neu thieu sparse_linear.pt thi am tham
-    khoi tao NGAU NHIEN dau sparse -> trong so lexical vo nghia. Tai san loai file thua va bao loi neu thieu.
-    """
+    """Thu muc local cua BGE-M3 chi gom file can cho suy luan."""
     if os.path.exists(cfg.EMBED_MODEL):
         path = cfg.EMBED_MODEL
     else:
@@ -46,6 +42,14 @@ def _embedder_path():
     for name in ("sparse_linear.pt", "colbert_linear.pt"):
         if not os.path.exists(os.path.join(path, name)):
             raise FileNotFoundError(f"Thieu {name} trong {path}: dau sparse cua BGE-M3 se bi khoi tao ngau nhien")
+
+    # ── Tự động tạo model.safetensors nếu chỉ có pytorch_model.bin (Tránh CVE-2025-32434 check) ──
+    bin_file = os.path.join(path, "pytorch_model.bin")
+    st_file = os.path.join(path, "model.safetensors")
+    if os.path.exists(bin_file) and not os.path.exists(st_file):
+        from safetensors.torch import save_file
+        save_file(torch.load(bin_file, map_location="cpu"), st_file)
+
     return path
 
 

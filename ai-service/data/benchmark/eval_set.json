@@ -1,0 +1,3 @@
+{"id": "q01", "audio": "data/benchmark/q01.wav", "gold_text": "Xét học bổng loại giỏi cần GPA và điểm rèn luyện bao nhiêu?", "gold_doc_ids": [1, 2]}
+{"id": "q02", "audio": "data/benchmark/q02.wav", "gold_text": "Thí sinh xét học bạ tổ hợp A00 cần tổng điểm tối thiểu là mấy?", "gold_doc_ids": [6, 8]}
+{"id": "q03", "audio": "data/benchmark/q03.wav", "gold_text": "Bị điểm F trong học kỳ có được xét học bổng khuyến khích không?", "gold_doc_ids": [1]}

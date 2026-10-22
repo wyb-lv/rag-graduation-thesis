@@ -25,8 +25,10 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi import UploadFile, File
 from pydantic import BaseModel, Field
 
+from . import speech
 from . import config as cfg
 from . import encoders
 from . import query_model as qm
@@ -245,3 +247,80 @@ def delete_document_vectors(document_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi xóa vector: {e}")
 
+# ── Voice endpoints (Hỗ trợ chuyển đổi Baseline vs Optimized) ───────────────
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Văn bản cần đọc")
+    voice: Optional[str] = Field(default=None, description="Tên giọng đọc")
+    optimized: bool = Field(default=True, description="True: Chuẩn hóa học vụ | False: Đọc thô nguyên văn")
+
+
+class SplitSentencesRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Văn bản cần tách câu")
+
+
+@app.post("/stt", summary="Nhận dạng giọng nói (Hỗ trợ Baseline vs Optimized)")
+def speech_to_text(
+    file: UploadFile = File(...),
+    optimized: bool = True,  # Tham số Query: ?optimized=true hoặc ?optimized=false
+):
+    """
+    - Khai báo 'def' đồng bộ để FastAPI đưa vào ThreadPool, không làm đơ Event Loop.
+    - Giới hạn tối đa 5MB chống tràn RAM/OOM Container.
+    - optimized=true: VAD + Từ điển Học vụ + Sửa lỗi đồng âm A00, GPA.
+    - optimized=false: Baseline gọi Whisper gốc không tiền/hậu xử lý.
+    """
+    try:
+        # Chặn cứng file vượt quá 5MB
+        content = file.file.read(cfg.MAX_AUDIO_BYTES + 1)
+        if len(content) > cfg.MAX_AUDIO_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Dung lượng file vượt quá giới hạn tối đa ({cfg.MAX_AUDIO_BYTES // (1024 * 1024)}MB)",
+            )
+
+        filename = file.filename or "audio.wav"
+        result = speech.transcribe_speech(
+            content,
+            filename=filename,
+            enable_vad=optimized,
+            enable_domain_prompt=optimized,
+            enable_phonetic_fix=optimized,
+        )
+        return {
+            "mode": "optimized" if optimized else "baseline",
+            **result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Lỗi STT:")
+        raise HTTPException(status_code=500, detail=f"Lỗi STT: {e}")
+
+
+@app.post("/tts/split", summary="Tách văn bản thành danh sách câu đã chuẩn hóa")
+def split_sentences(payload: SplitSentencesRequest):
+    """Giúp Frontend nhận danh sách câu để phát gối đầu (prefetching) từng câu."""
+    norm_text = speech.normalize_academic_text(payload.text, enable_academic_norm=True)
+    sentences = speech.split_into_sentences(norm_text)
+    return {"sentences": sentences}
+
+
+@app.post("/tts", summary="Tổng hợp giọng nói (Hỗ trợ Baseline vs Optimized)")
+async def text_to_speech(payload: TTSRequest):
+    """
+    - payload.optimized=true: Lọc bỏ nhãn [file.pdf], chuẩn hóa 15/30, 3.60, THPT.
+    - payload.optimized=false: Đọc thô nguyên bản văn bản nhận được.
+    """
+    try:
+        text_to_read = speech.normalize_academic_text(
+            payload.text, enable_academic_norm=payload.optimized
+        )
+        voice = payload.voice or cfg.TTS_VOICE
+        return StreamingResponse(
+            speech.synthesize_speech_stream(text_to_read, voice=voice),
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-cache"},
+        )
+    except Exception as e:
+        log.exception("Lỗi TTS:")
+        raise HTTPException(status_code=500, detail=f"Lỗi TTS: {e}")
