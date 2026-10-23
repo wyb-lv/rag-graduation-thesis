@@ -4,7 +4,8 @@ Chay (trong thu muc Model):
     uvicorn api:app --reload --port 8000
 
 FE goi:
-    POST /ask  { "question": "...", "mode": "hybrid_rerank", "kho": "...", "reference_date": "2026-01-31" }
+    POST /ask  { "question": "...", "mode": "hybrid_rerank", "kho": "...", "reference_date": "2026-01-31",
+                 "loai_van_ban": ["thong_bao"] }
       ->  { "answer": "...", "in_scope": true, "sources": [...] }
     Chi `question` la bat buoc. Khong tim thay quy dinh phu hop -> in_scope=false, sources=[], khong goi LLM.
     POST /ask/stream  (cung body)  ->  text/event-stream (SSE), xem API.md:
@@ -23,15 +24,15 @@ from datetime import date
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import config as cfg
-from . import encoders
-from . import query_model as qm
-from . import embed_service
-from . import embed_consumer
+from . import guard, qdrant_setup, small_talk
+from .ingest import embed_consumer, embed_service
+from .models import encoders
+from .rag import query_model as qm
+from .small_talk import Intent
 
 log = logging.getLogger("uvicorn.error")
 _warmup = {"status": "disabled" if not cfg.WARMUP else "pending"}
@@ -56,6 +57,8 @@ def warm_up():
 
 @asynccontextmanager
 async def lifespan(app):
+    # Nhanh trong HYBRID_LEGS phai co vector trong collection; thieu thi RuntimeError, server khong khoi dong
+    qdrant_setup.validate_legs(qm.get_qdrant())
     # Thread nen: server nhan request ngay (/health tra loi duoc), khong bat FE cho tren connection refused
     if cfg.WARMUP:
         threading.Thread(target=warm_up, name="model-warmup", daemon=True).start()
@@ -65,13 +68,8 @@ async def lifespan(app):
 
 
 app = FastAPI(title="RAG QA API", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Không thêm CORSMiddleware: api-gateway đã gắn CORS, thêm ở đây thì response có 2 header
+# Access-Control-Allow-Origin và trình duyệt chặn fetch.
 
 
 class AskRequest(BaseModel):
@@ -80,6 +78,8 @@ class AskRequest(BaseModel):
     mode: Optional[Literal["dense", "hybrid", "hybrid_rerank"]] = None  # mac dinh RAG_MODE
     kho: Optional[str] = None
     reference_date: Optional[date] = None  # loc van ban con hieu luc tai ngay nay; mac dinh hom nay
+    khoa: Optional[int] = Field(default=None, ge=1990, le=2100)  # khoa cua sinh vien; chi lay van ban ap dung cho khoa nay
+    loai_van_ban: Optional[List[str]] = None  # chi tim trong cac loai van ban nay (vd ["thong_bao", "quy_che"])
 
 
 class Source(BaseModel):
@@ -94,6 +94,8 @@ class AskResponse(BaseModel):
     answer: str
     in_scope: bool
     sources: List[Source]
+    # rag | greeting | thanks | goodbye | capability | meta | blocked (guard.py / small_talk.py)
+    intent: str = Intent.RAG.value
 
 
 @app.get("/health")
@@ -103,9 +105,33 @@ def health():
 
 def _question(payload):
     question = payload.question.strip()
+    if cfg.GUARD_ENABLED:
+        question = guard.normalize_question(question)  # chi con zero width / ky tu dieu khien cung la cau hoi rong
     if not question:
         raise HTTPException(status_code=400, detail="question khong duoc de trong")
     return question
+
+
+def _gate(question):
+    """Guard dau vao + small talk router, dung chung cho /ask va /ask/stream (truoc moi buoc RAG).
+
+    Tra ve (cau hoi dung cho RAG, reply); reply = (answer, in_scope, intent) khi khong can truy van / goi LLM, con lai None."""
+    if not cfg.GUARD_ENABLED:
+        return question, None
+    enforce = cfg.GUARD_MODE == "enforce"
+    verdict = guard.inspect_question(question)
+    if verdict.level == "suspicious" and enforce:
+        question = guard.strip_delimiters(question)
+    if (verdict.level == "block" and enforce) or not question:
+        intent = Intent.BLOCKED
+    else:
+        intent, question = small_talk.route(question)
+    guard.log_decision(question, intent, verdict)
+    if intent is Intent.BLOCKED:
+        return question, (cfg.GUARD_REFUSAL_ANSWER, False, intent)
+    if intent is not Intent.RAG:
+        return question, (small_talk.reply_for(intent), True, intent)
+    return question, None
 
 
 @contextmanager
@@ -133,7 +159,10 @@ def _sources(hits):
 
 @app.post("/ask", response_model=AskResponse)
 def ask(payload: AskRequest):
-    question = _question(payload)
+    question, reply = _gate(_question(payload))
+    if reply:
+        answer, in_scope, intent = reply
+        return AskResponse(answer=answer, in_scope=in_scope, sources=[], intent=intent.value)
     with _pipeline_errors():
         answer, hits, in_scope = qm.ask(
             question,
@@ -141,8 +170,11 @@ def ask(payload: AskRequest):
             mode=payload.mode,
             kho=payload.kho,
             reference_date=payload.reference_date,
+            khoa=payload.khoa,
+            loai_van_ban=payload.loai_van_ban,
         )
-    return AskResponse(answer=answer, in_scope=in_scope, sources=_sources(hits))
+    intent = Intent.BLOCKED if answer == cfg.GUARD_REFUSAL_ANSWER else Intent.RAG  # guard dau ra da chan cau tra loi
+    return AskResponse(answer=answer, in_scope=in_scope, sources=_sources(hits), intent=intent.value)
 
 
 def _sse(data):
@@ -157,23 +189,35 @@ def ask_stream(payload: AskRequest):
     Truy van + rerank chay truoc khi gui header, nen loi o buoc nay van tra ma HTTP (400/500/502) nhu /ask.
     Loi khi dang sinh cau tra loi thi gui su kien `error` (status 200 da gui roi) va dong stream, khong co [DONE].
     """
-    question = _question(payload)
-    with _pipeline_errors():
-        hits = qm.find_hits(
-            question,
-            top_k=payload.top_k,
-            mode=payload.mode,
-            kho=payload.kho,
-            reference_date=payload.reference_date,
-        )
-        chunks = qm.generate_answer_stream(question, hits) if hits else iter([qm.NO_RESULT_ANSWER])
+    question, reply = _gate(_question(payload))
+    if reply:  # chao hoi / bi chan: cung hop dong SSE, sources rong + dung mot delta
+        answer, in_scope, intent = reply
+        hits, chunks = [], iter([answer])
+    else:
+        with _pipeline_errors():
+            hits = qm.find_hits(
+                question,
+                top_k=payload.top_k,
+                mode=payload.mode,
+                kho=payload.kho,
+                reference_date=payload.reference_date,
+                khoa=payload.khoa,
+                loai_van_ban=payload.loai_van_ban,
+            )
+            chunks = qm.generate_answer_stream(question, hits) if hits else iter([qm.NO_RESULT_ANSWER])
+        in_scope, intent = bool(hits), Intent.RAG
     sources = [s.model_dump() for s in _sources(hits)]
+    # `intent` chi them vao su kien khi khac rag, de su kien cua cac cau hoi RAG giu nguyen tung byte
+    extra = {} if intent is Intent.RAG else {"intent": intent.value}
 
     def events():
-        yield _sse({"event": "sources", "in_scope": bool(hits), "sources": sources})
+        yield _sse({"event": "sources", "in_scope": in_scope, "sources": sources, **extra})
         try:
             for text in chunks:
                 yield _sse({"event": "delta", "text": text})
+        except guard.OutputBlocked:
+            yield _sse({"event": "error", "detail": cfg.GUARD_REFUSAL_ANSWER})
+            return
         except Exception as e:
             yield _sse({"event": "error", "detail": f"Loi khi goi LLM: {e}"})
             return

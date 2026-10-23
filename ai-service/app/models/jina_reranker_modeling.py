@@ -1,20 +1,3 @@
-# ruff: noqa
-# flake8: noqa
-#
-# Vendored copy of modeling.py from https://huggingface.co/jinaai/jina-reranker-v3.5
-#   revision : e8a93f33f0b22108f8c2364f8484ce3422552fbc
-#   git blob : 4d1d4668e6da0b159548d6cb0a3edaff407fc730  (the upstream file, before the change listed below)
-#   author   : Jina AI
-#   license  : CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/) - non-commercial use only
-#
-# Why it is vendored: the model card loads this file with AutoModel.from_pretrained(..., trust_remote_code=True), which
-# runs code downloaded at runtime. This reviewed copy lets encoders.py call JinaForRanking.from_pretrained(path) with no
-# remote code. Keep it in sync with config.RERANK_REVISION: when bumping the revision, review and re-vendor this file.
-#
-# Change from the original (everything below the marker line is otherwise byte-for-byte identical):
-#   - _ensure_tokenizer(): removed trust_remote_code=True from AutoTokenizer.from_pretrained (the tokenizer is a plain
-#     Qwen2Tokenizer and needs no remote code).
-# ----- upstream modeling.py starts below -----
 import numpy as np
 from dataclasses import dataclass
 import torch
