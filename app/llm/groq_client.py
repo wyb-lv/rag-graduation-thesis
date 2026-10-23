@@ -123,7 +123,7 @@ def _check_config(client):
     if not model:
         raise KeyError("GROQ_QWEN_MODEL")
     if not (cfg.GROQ_API_KEY or client):
-        raise KeyError("API_KEY")
+        raise KeyError("GROQ_API_KEY")
     return model
 
 

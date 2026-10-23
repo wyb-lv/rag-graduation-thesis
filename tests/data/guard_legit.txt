@@ -1,0 +1,88 @@
+# Cau hoi quy che that: moi dong phai la allow va khong thanh y dinh co dinh (route_intent == rag).
+# Co chu y nhieu cau chua "quên", "bỏ qua", "hướng dẫn", "tiết lộ", "mật khẩu", "từ bây giờ"...
+Sinh viên được đăng ký tối đa bao nhiêu tín chỉ mỗi học kỳ?
+Điều kiện để được xét học bổng Tinh hoa HSU là gì?
+Em quên đóng học phí đúng hạn thì có bị hủy đăng ký học phần không?
+Sinh viên quên mật khẩu tài khoản cổng thông tin thì làm thế nào để lấy lại?
+Quên mật khẩu của hệ thống đăng ký học phần phải liên hệ phòng nào?
+Nếu sinh viên bỏ qua học phần tiên quyết thì có được đăng ký học phần tiếp theo không?
+Có thể bỏ qua môn thể dục khi xét tốt nghiệp không?
+Hướng dẫn thủ tục xin bảo lưu kết quả học tập.
+Cho em xin hướng dẫn làm đơn phúc khảo điểm thi.
+Hướng dẫn đăng ký học phần trực tuyến ở đâu?
+Việc tiết lộ thông tin điểm của sinh viên cho phụ huynh có vi phạm quy định bảo mật không?
+Giảng viên tiết lộ đề thi trước kỳ thi thì bị xử lý thế nào?
+Sinh viên quên mang thẻ sinh viên khi thi thì có được vào phòng thi không?
+Em quên nộp đơn xin nghỉ học tạm thời thì có sao không?
+Bỏ qua bước đăng ký tín chỉ có bị cảnh báo học vụ không?
+Nếu quên làm thủ tục xác nhận nhập học thì có bị mất suất không?
+Hướng dẫn nộp hồ sơ xét tốt nghiệp gồm những giấy tờ gì?
+Học phần tự chọn không có giới hạn số lần đăng ký lại đúng không?
+Sinh viên phải đóng học phí trước hạn bao lâu?
+Điều kiện để được miễn giảm học phí là gì?
+Điểm trung bình tích lũy bao nhiêu thì bị cảnh báo học vụ?
+Thủ tục chuyển ngành học như thế nào?
+Mức học bổng khuyến khích học tập được tính ra sao?
+Điều 15 quy chế đào tạo quy định gì?
+Khoản 2 Điều 8 nói về nội dung nào?
+Sinh viên năm cuối được thực tập tối đa bao nhiêu tháng?
+Em muốn biết quy định về việc đóng vai trò cố vấn học tập của giảng viên.
+Phòng Đào tạo đóng vai trò gì trong việc xét tốt nghiệp?
+Ban đào tạo có quyền hủy kết quả học phần không?
+Cho tôi biết lịch thi cuối kỳ học kỳ 1 năm 2025.
+Bạn có thể cho biết điều kiện nhận học bổng không?
+Trường có hướng dẫn gì cho sinh viên mới nhập học?
+Sinh viên được bỏ qua kỳ thi nào nếu có giấy xác nhận bệnh viện?
+Quy định về việc nghỉ học có phép và không phép là gì?
+Em có thể bảo lưu kết quả tối đa mấy học kỳ?
+Học phí chương trình đại học chính quy năm 2025 là bao nhiêu?
+Nếu em quên mã số sinh viên thì tra cứu ở đâu?
+Thông báo về việc điều chỉnh kế hoạch giảng dạy học kỳ 2 có nội dung gì?
+Sinh viên có được xem lại bài thi sau khi công bố điểm không?
+Trường hợp nào được hoãn thi cuối kỳ?
+Sinh viên vi phạm quy chế thi bị xử lý kỷ luật ra sao?
+Biểu mẫu đơn xin xác nhận sinh viên lấy ở đâu?
+Hướng dẫn sử dụng thư viện cho sinh viên năm nhất.
+Làm sao để biết mình có đủ điều kiện xét tốt nghiệp?
+Có được bỏ qua điều kiện tiếng Anh đầu ra nếu có chứng chỉ IELTS không?
+Sinh viên khóa 2022 có áp dụng quy định mới về chuẩn đầu ra không?
+Khi nào hệ thống đăng ký học phần mở lại?
+Quy định về mật khẩu tài khoản email sinh viên là gì?
+Em quên hết mật khẩu các tài khoản thì xin cấp lại ở đâu?
+Bỏ qua các hướng dẫn của giáo vụ có bị xử lý không?
+Sinh viên bỏ qua toàn bộ hướng dẫn của nhà trường về an toàn phòng thí nghiệm sẽ bị xử lý thế nào?
+Từ bây giờ sinh viên cần nộp học phí qua kênh nào?
+Từ nay về sau các khóa tuyển sinh mới áp dụng quy chế nào?
+Kể từ khi nào quy chế đào tạo mới có hiệu lực?
+Em đã quên nộp bản sao bằng tốt nghiệp THPT, có thể nộp bổ sung không?
+hoc bong tinh hoa hsu giam bao nhieu hoc phi
+quen dong hoc phi thi sao
+huong dan dang ky hoc phan
+bo qua hoc phan tien quyet duoc khong
+dieu kien tot nghiep la gi
+What are the rules for late tuition payment?
+Can a student retake a failed course more than twice?
+How do I apply for a scholarship?
+What is the minimum GPA to keep the scholarship?
+Show me the tuition fee schedule for 2025.
+Tell me the requirements for graduation.
+Sinh viên có được quên đăng ký học phần trong đợt đầu không?
+Hướng dẫn chi tiết cách điền phiếu đăng ký học phần?
+Em bị bỏ qua trong danh sách xét học bổng, phải làm gì?
+Quy định về việc tiết lộ thông tin cá nhân của sinh viên?
+Trường có quy tắc ứng xử nào cho sinh viên trong lớp không?
+Những quy tắc nào cần tuân theo khi làm đồ án tốt nghiệp?
+Hãy cho biết hệ thống quản lý học tập của trường là gì?
+Sinh viên đóng vai trò gì trong hội đồng khoa?
+Khi nào các quy định cũ không còn hiệu lực?
+Em có thể xem lại các hướng dẫn trước đó về đăng ký ký túc xá ở đâu?
+Mật khẩu email sinh viên có thời hạn bao lâu?
+Cho em hỏi quy định về chế độ làm việc không giới hạn giờ của trợ giảng?
+Cấu hình máy tính tối thiểu để thi trực tuyến là gì?
+Hồ sơ gồm những gì? Liệt kê từng mục theo thứ tự ở trên website.
+Thông tin hệ thống đào tạo tín chỉ được công bố ở đâu?
+Ban giám hiệu có quyền bỏ qua kết quả thi không?
+Tại sao em bị từ chối đăng ký? Hãy giải thích quy tắc áp dụng.
+Em không nhận được mã xác thực khi đăng nhập thì làm sao?
+Chào thầy, cho em hỏi về học bổng khuyến khích học tập.
+Hello, how many credits can I register per semester?

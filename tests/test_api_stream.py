@@ -82,6 +82,7 @@ def test_startup_warms_up_embedder_and_reranker(monkeypatch):
     calls = []
     monkeypatch.setattr(api.cfg, "WARMUP", True)
     monkeypatch.setattr(api.cfg, "RAG_MODE", "hybrid_rerank")
+    monkeypatch.setattr(api.qdrant_setup, "validate_legs", lambda client: None)  # lifespan không chạm Qdrant thật
     monkeypatch.setattr(api.encoders, "encode_texts", lambda texts: calls.append("encode"))
     monkeypatch.setattr(api.encoders, "rerank_scores", lambda q, passages: calls.append("rerank"))
     monkeypatch.setitem(api._warmup, "status", "pending")
@@ -121,3 +122,23 @@ def test_stream_missing_env_is_500(client, monkeypatch):
     monkeypatch.setattr(qm, "find_hits", lambda question, **kw: [HIT])
     monkeypatch.setattr(qm, "generate_answer_stream", missing)
     assert client.post("/ask/stream", json={"question": "cau hoi"}).status_code == 500
+
+
+def test_loai_van_ban_is_passed_to_the_pipeline(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(qm, "find_hits", lambda question, **kw: seen.append(kw) or [])
+    monkeypatch.setattr(qm, "ask", lambda question, **kw: seen.append(kw) or ("tra loi", [], False))
+    client.post("/ask/stream", json={"question": "cau hoi", "loai_van_ban": ["thong_bao", "quy_che"]})
+    client.post("/ask", json={"question": "cau hoi", "loai_van_ban": ["bieu_mau"]})
+    assert [kw["loai_van_ban"] for kw in seen] == [["thong_bao", "quy_che"], ["bieu_mau"]]
+
+
+def test_loai_van_ban_defaults_to_none(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(qm, "find_hits", lambda question, **kw: seen.append(kw) or [])
+    client.post("/ask/stream", json={"question": "cau hoi"})
+    assert seen[0]["loai_van_ban"] is None
+
+
+def test_loai_van_ban_must_be_a_list_of_strings(client):
+    assert client.post("/ask", json={"question": "cau hoi", "loai_van_ban": "thong_bao"}).status_code == 422
