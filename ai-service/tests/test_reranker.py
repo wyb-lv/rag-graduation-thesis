@@ -9,11 +9,11 @@ import numpy as np
 import pytest
 import torch
 
-import config as cfg
-import encoders
+from app import config as cfg
+from app.models import encoders
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VENDORED = os.path.join(REPO_DIR, "jina_reranker_modeling.py")
+VENDORED = os.path.join(REPO_DIR, "app", "models", "jina_reranker_modeling.py")
 MARKER = "# ----- upstream modeling.py starts below -----\n"
 
 
@@ -172,4 +172,4 @@ def test_vendored_modeling_is_the_pinned_upstream_plus_the_documented_change():
 
 
 def test_reranker_class_comes_from_the_vendored_module():
-    assert encoders.JinaForRanking.__module__ == "jina_reranker_modeling"
+    assert encoders.JinaForRanking.__module__ == "app.models.jina_reranker_modeling"

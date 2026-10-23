@@ -2,7 +2,7 @@
 
 API tra loi cau hoi dua tren tai lieu (RAG hybrid). Backend: FastAPI (`api.py`).
 
-Luong xu ly: cau hoi -> BGE-M3 (`FlagEmbedding`, dense + sparse trong 1 lan encode) -> Qdrant hybrid search (prefetch dense + sparse, hop nhat RRF, loc payload) -> top 20 -> `jina-reranker-v3.5` (listwise, nap qua transformers) -> top 5 doan -> Groq Qwen -> cau tra loi co trich dan.
+Luong xu ly: cau hoi -> chuan hoa -> guard dau vao -> small talk router (chao hoi tra loi co dinh, khong di tiep) -> BGE-M3 (`FlagEmbedding`, dense + sparse trong 1 lan encode) -> Qdrant hybrid search (prefetch dense + sparse, hop nhat RRF, loc payload) -> top 20 -> `jina-reranker-v3.5` (listwise, nap qua transformers) -> top 5 doan -> quet doan trich (bo doan chua chi dan chen vao) -> prompt co rao -> Groq Qwen -> guard dau ra -> cau tra loi co trich dan.
 
 ## Chay local
 
@@ -18,12 +18,12 @@ uvicorn api:app --reload --port 8000
 
 CLI: `python query_model.py [--mode dense|hybrid|hybrid_rerank] [--kho KHO] [--date YYYY-MM-DD] "cau hoi"`.
 
-Cau hinh tap trung o `config.py`, doi bang bien moi truong / `.env` (khong can sua code):
+Cau hinh tap trung o `config.py`. Chi **bon** bien doc tu moi truong (`.env` cua ai-service, `environment` cua docker-compose, `ENV` cua Dockerfile): `GROQ_API_KEY`, `GROQ_QWEN_MODEL`, `QDRANT_URL`, `GROQ_CACHE_DIR`. Moi gia tri khac la hang so trong `config.py` (ten trong bang la ten hang so; bool ghi `1`/`0` la `True`/`False`): sua o do roi `docker-compose up -d --build ai-service`.
 
 | Bien | Mac dinh | Y nghia |
 |---|---|---|
 | `GROQ_QWEN_MODEL` | (bat buoc) | ID model Qwen tren Groq, vi du `qwen/qwen3.8-27b` |
-| `API_KEY` (hoac `GROQ_API_KEY`) | (bat buoc) | Groq API key |
+| `GROQ_API_KEY` | (bat buoc) | Groq API key (ten cu `API_KEY` khong con duoc doc) |
 | `GROQ_REASONING_EFFORT` | `none` | Tat reasoning cua Qwen; de trong = khong gui tham so |
 | `GROQ_RPM` / `GROQ_TPM` | `30` / `8000` | Gioi han toc do phia client |
 | `GROQ_MAX_RETRIES` | `5` | So lan thu lai khi 429/timeout (backoff mu, ton trong `Retry-After`) |
@@ -41,7 +41,17 @@ Cau hinh tap trung o `config.py`, doi bang bien moi truong / `.env` (khong can s
 | `RERANK_MIN_SCORE` | `0.1` | Diem rerank (cosine, -1..1) toi thieu cua mot doan (mode `hybrid_rerank`); `-1` de tat |
 | `SCORE_THRESHOLD` | `0.5` | Cosine toi thieu (chi mode `dense`) |
 | `HNSW_EF` | `128` | efSearch cua nhanh dense |
+| `HYBRID_LEGS` | `dense,sparse` | Cac nhanh cua mode `hybrid` / `hybrid_rerank`, lay tu `dense`, `sparse`, `bm25` (phan cach bang dau phay). `bm25` can collection co vector `bm25` (chay `scripts/migrate_add_bm25.py`), thieu thi server khong khoi dong. Mode `dense` khong doi |
+| `BM25_TOKENIZER` | `syllable_bigram` | `syllable`, `syllable_bigram` hoac `pyvi`. Phai giong luc index |
+| `BM25_K1` / `BM25_B` | `1.2` / `0.75` | Tham so BM25. Phai giong luc index |
+| `BM25_AVG_LEN` | `120.0` (gia tri tam) | So token BM25 trung binh moi chunk; dung gia tri `scripts/migrate_add_bm25.py` do va in ra. Phai giong luc index |
+| `PAYLOAD_FIELD_LOAI_VAN_BAN` | `loai_van_ban` | Ten field payload dung de loc theo `loai_van_ban` |
 | `PAYLOAD_FIELD_KHO`, `..._DOI_TUONG`, `..._HIEU_LUC_TU`, `..._HIEU_LUC_DEN` | `kho`, `doi_tuong`, `hieu_luc_tu`, `hieu_luc_den` | Ten field payload dung de index/loc |
+| `GUARD_ENABLED` | `1` | `0` tat guard + small talk: hanh vi y het truoc khi co guard (chi them truong `intent` = `rag`) |
+| `GUARD_MODE` | `enforce` | `log_only` chi ghi log (khong chan cau hoi, khong bo doan, khong chan dau ra, khong sua cau hoi) de do false positive; small talk van tra loi co dinh |
+| `GUARD_MAX_QUESTION_CHARS` | `1000` | Cau hoi dai hon bi cat (sau khi chuan hoa) |
+| `GUARD_CANARY` | (de trong) | De trong = suy ra tu noi dung system prompt, on dinh giua cac lan chay nen cache dia Groq van trung |
+| `GUARD_REFUSAL_ANSWER`, `GUARD_REPLY_GREETING` / `_CAPABILITY` / `_META` / `_THANKS` / `_GOODBYE` | xem `config.py` | Cau tra loi co dinh |
 
 Base URL mac dinh: `http://localhost:8000`
 
@@ -50,10 +60,12 @@ Base URL mac dinh: `http://localhost:8000`
 | `mode` | Truy van Qdrant | Rerank |
 |---|---|---|
 | `dense` | chi vector `dense` (cosine) | khong |
-| `hybrid` | prefetch `dense` + `sparse` (moi nhanh 20), hop nhat RRF | khong |
+| `hybrid` | prefetch cac nhanh trong `HYBRID_LEGS` (mac dinh `dense` + `sparse`, them `bm25` neu bat; moi nhanh 20), hop nhat RRF o phia Qdrant | khong |
 | `hybrid_rerank` | nhu `hybrid` | `jina-reranker-v3.5`, giu 5 doan |
 
-Cau hoi khong co token sparse thi `hybrid` tu dong chi dung nhanh dense.
+Moi nhanh la mot `Prefetch` trong cung mot request toi Qdrant va **cung mang mot bo loc** (`kho`, hieu luc, `khoa`, `loai_van_ban`). Nhanh `dense`/`sparse` la vector BGE-M3 (GPU); `bm25` la nhanh tu khoa tieng Viet (CPU, giu dau, them cap am tiet nhu `hoc_bong`, `dieu_15`), IDF do Qdrant tinh.
+
+Nhanh nao khong co token (vd cau hoi chi co dau cau) thi bi bo; khong con nhanh nao thi dung `dense`. Chi con mot nhanh thi truy van thang nhanh do, khi do `score` la diem cua nhanh chu khong phai diem RRF.
 
 ## Endpoints
 
@@ -84,7 +96,8 @@ Gui cau hoi, nhan cau tra loi cua LLM kem nguon trich dan.
   "mode": "hybrid_rerank",
   "top_k": 5,
   "kho": "Khoa A",
-  "reference_date": "2026-01-31"
+  "reference_date": "2026-01-31",
+  "loai_van_ban": ["thong_bao", "quy_che"]
 }
 ```
 
@@ -95,6 +108,7 @@ Gui cau hoi, nhan cau tra loi cua LLM kem nguon trich dan.
 | `top_k` | int | khong | `5` | So doan van lay lam ngu canh (1-10) |
 | `kho` | string | khong | - | Chi tim trong kho nay |
 | `reference_date` | date | khong | hom nay | Chi lay van ban con hieu luc tai ngay nay |
+| `loai_van_ban` | string[] | khong | - | Chi tim trong cac loai van ban nay: `quy_che`, `quy_dinh`, `thong_bao`, `bieu_mau`, `huong_dan`, `khac` (chunker suy ra tu ten tai lieu). Bo trong hoac `[]` = khong loc; gia tri khong ton tai thi khong co doan nao (`in_scope=false`) |
 
 Loc theo ngay: van ban hop le khi `hieu_luc_tu <= reference_date <= hieu_luc_den`; thieu `hieu_luc_tu` / `hieu_luc_den` (hoac `null`) coi nhu khong gioi han o phia do. Payload hien tai chi co `source` va `text` nen cac bo loc nay chua loai doan nao cho den khi bo chunking ghi them `kho`, `doi_tuong`, `hieu_luc_tu`, `hieu_luc_den`.
 
@@ -111,7 +125,8 @@ Loc theo ngay: van ban hop le khi `hieu_luc_tu <= reference_date <= hieu_luc_den
       "rerank_score": 0.6004,
       "payload": { "source": "quy_che.pdf", "text": "Thi sinh duoc dang ky toi da 15 nguyen vong ..." }
     }
-  ]
+  ],
+  "intent": "rag"
 }
 ```
 
@@ -122,14 +137,36 @@ Prompt yeu cau chi tra loi tu cac doan duoc cung cap, trich dan ten van ban va D
 {
   "answer": "Không tìm thấy quy định liên quan đến câu hỏi trong các văn bản được cung cấp.",
   "in_scope": false,
-  "sources": []
+  "sources": [],
+  "intent": "rag"
+}
+```
+
+**Response `200` khi la loi chao / hoi ve tro ly** (tra loi co dinh, khong encode, khong truy van, khong rerank, khong goi LLM; `in_scope` la `true` nhung `sources` rong)
+```json
+{
+  "answer": "Xin chào! Tôi là trợ lý tra cứu quy định của Trường Đại học Hoa Sen. ...",
+  "in_scope": true,
+  "sources": [],
+  "intent": "greeting"
+}
+```
+
+**Response `200` khi cau hoi bi chan** (khong truy van, khong goi LLM; `in_scope=false`; cau tu choi khong noi luat nao da khop)
+```json
+{
+  "answer": "Tôi không thể thực hiện yêu cầu này. Bạn có thể hỏi tôi về quy chế, quy định, thông báo hoặc biểu mẫu của Trường Đại học Hoa Sen.",
+  "in_scope": false,
+  "sources": [],
+  "intent": "blocked"
 }
 ```
 
 | Field | Type | Ghi chu |
 |---|---|---|
-| `in_scope` | bool | `false` khi khong con doan nao sau loc payload / nguong tuong dong |
-| `sources[].score` | float | Diem rerank neu co rerank; khong thi diem truy van (cosine o `dense`, diem RRF o `hybrid`) |
+| `in_scope` | bool | `false` khi khong con doan nao sau loc payload / nguong tuong dong, hoac cau hoi / cau tra loi bi guard chan. `true` voi cau tra loi RAG va voi tra loi co dinh (chao hoi) |
+| `intent` | string | **Tuy chon, them moi**; client cu bo qua duoc. `rag` (di qua pipeline, ke ca khi `in_scope=false` vi khong co doan phu hop), `greeting`, `thanks`, `goodbye`, `capability` (hoi cong dung / ban la ai), `meta` (hoi ve model, prompt, cau hinh: tra loi co dinh, khong tiet lo), `blocked` (guard chan cau hoi hoac chan cau tra loi lo prompt / bi mat). Cac intent khac `rag` khong bao gio co `sources` |
+| `sources[].score` | float | Diem rerank neu co rerank; khong thi diem truy van (cosine o `dense`, diem RRF o `hybrid` nhieu nhanh, diem cua nhanh neu chi con mot nhanh) |
 | `sources[].rerank_score` | float / null | Diem cosine (-1..1) cua reranker, co the **am**; chi so sanh duoc giua cac doan cung mot lan hoi. `null` khi khong rerank |
 | `sources[].payload` | object | Toan bo payload cua doan (dung de trich dan) |
 
@@ -139,7 +176,7 @@ Nguong tuong dong: `dense` dung cosine `SCORE_THRESHOLD`; `hybrid_rerank` dung `
 
 | Status | Khi nao | Body |
 |---|---|---|
-| `400` | `question` rong | `{ "detail": "question khong duoc de trong" }` |
+| `400` | `question` rong (ke ca chi gom ky tu zero width / dieu khien) | `{ "detail": "question khong duoc de trong" }` |
 | `422` | `mode` khong hop le | chi tiet validation |
 | `500` | Server thieu bien moi truong (`.env`) | `{ "detail": "Thieu bien moi truong: ..." }` |
 | `502` | Qdrant loi, hoac Groq that bai sau khi het so lan thu lai (429/timeout) | `{ "detail": "Loi khi truy van Qdrant/goi LLM: ..." }` |
@@ -163,10 +200,11 @@ data: [DONE]
 | Su kien | So lan | Noi dung |
 |---|---|---|
 | `sources` | 1, dau tien | `in_scope` + `sources` (cung dinh dang voi `/ask`) |
-| `delta` | >= 1 | `text`: doan tiep theo cua cau tra loi, noi lai theo thu tu. Ngoai pham vi (`in_scope=false`): 1 `delta` duy nhat la cau "Không tìm thấy quy định..." va khong goi LLM |
-| `error` | 0-1 | `detail`: loi khi dang sinh cau tra loi. Stream dong ngay sau do, **khong** co `[DONE]` |
+| `delta` | >= 1 | `text`: doan tiep theo cua cau tra loi, noi lai theo thu tu. Ngoai pham vi (`in_scope=false`): 1 `delta` duy nhat la cau "Không tìm thấy quy định..." va khong goi LLM. Chao hoi / bi chan: 1 `delta` duy nhat la cau tra loi co dinh |
+| `error` | 0-1 | `detail`: loi khi dang sinh cau tra loi. Stream dong ngay sau do, **khong** co `[DONE]`. Guard dau ra phat hien canary / lo system prompt / bi mat giua chung thi `detail` la cau tu choi (`GUARD_REFUSAL_ANSWER`); cac `delta` da gui truoc do (khong chua du mau lo) khong thu hoi duoc |
 | `[DONE]` | 1, cuoi cung | Cau tra loi da xong |
 
+- Tra loi co dinh (chao hoi) va cau hoi bi chan van theo dung hop dong tren: `sources` voi danh sach rong (`in_scope=true` cho chao hoi, `false` cho cau bi chan), dung 1 `delta`, roi `[DONE]`. Su kien `sources` cua chung co them khoa `intent` (`greeting`, `thanks`, `goodbye`, `capability`, `meta`, `blocked`); su kien `sources` cua cau hoi RAG **khong** co khoa nay (giu nguyen nhu truoc).
 - Truy van Qdrant + rerank chay **truoc** khi gui header, nen loi o buoc nay van tra ma HTTP `400/422/500/502` voi body JSON nhu `/ask`. Sau khi da nhan `200`, loi chi bao bang su kien `error`.
 - Stream ket thuc ma khong co `[DONE]` (va khong co `error`) = mat ket noi giua chung, FE nen coi la loi.
 - Groq 429/timeout truoc token dau tien van duoc thu lai nhu `/ask` (client cho lau hon, chua nhan `delta` nao). Loi sau khi da gui token thi khong thu lai, gui `error`.

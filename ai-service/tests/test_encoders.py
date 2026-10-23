@@ -2,9 +2,9 @@
 import numpy as np
 import pytest
 
-import config as cfg
-import encoders
-import query_model as qm
+from app import config as cfg
+from app.models import encoders
+from app.rag import query_model as qm
 
 pytestmark = pytest.mark.integration
 

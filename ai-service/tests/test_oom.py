@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import torch
 
-import config as cfg
-import encoders
+from app import config as cfg
+from app.models import encoders
 
 
 def oom():
