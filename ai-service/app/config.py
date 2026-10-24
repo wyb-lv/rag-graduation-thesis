@@ -76,7 +76,7 @@ FIELD_HIEU_LUC_DEN = os.environ.get("PAYLOAD_FIELD_HIEU_LUC_DEN", "hieu_luc_den"
 TOP_K_RETRIEVAL = int(os.environ.get("TOP_K_RETRIEVAL", "20"))
 TOP_K_RERANK = int(os.environ.get("TOP_K_RERANK", "5"))  # so doan dua vao ngu canh LLM (moi mode)
 # dense: chi vector `dense` | hybrid: dense + sparse (RRF) | hybrid_rerank: hybrid + jina-reranker
-RAG_MODE = os.environ.get("RAG_MODE", "hybrid_rerank")
+RAG_MODE = os.environ.get("RAG_MODE", "hybrid")
 RAG_MODES = ("dense", "hybrid", "hybrid_rerank")
 # Chi mode `dense`: cosine toi thieu de coi cau hoi la co trong tai lieu (do tren bge-m3 + quy_che.pdf:
 # cau trong pham vi >= 0.5, cau ngoai pham vi <= 0.56). Diem RRF khong phai cosine nen khong dung nguong nay.
