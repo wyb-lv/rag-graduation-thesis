@@ -22,9 +22,9 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import date
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi import UploadFile, File
 from pydantic import BaseModel, Field
 
@@ -247,80 +247,138 @@ def delete_document_vectors(document_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi xóa vector: {e}")
 
-# ── Voice endpoints (Hỗ trợ chuyển đổi Baseline vs Optimized) ───────────────
+# ==============================================================================
+# 4. VOICE INTERACTION ENDPOINTS (STT, VOICE-TO-RAG STREAM & TTS)
+# ==============================================================================
+
+
 class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, description="Văn bản cần đọc")
-    voice: Optional[str] = Field(default=None, description="Tên giọng đọc")
-    optimized: bool = Field(default=True, description="True: Chuẩn hóa học vụ | False: Đọc thô nguyên văn")
+    text: str = Field(..., min_length=1, max_length=4000, description="Văn bản câu trả lời cần đọc thành tiếng")
+    voice: str = cfg.TTS_VOICE
 
 
-class SplitSentencesRequest(BaseModel):
-    text: str = Field(..., min_length=1, description="Văn bản cần tách câu")
+def _read_and_validate_audio(file: UploadFile) -> tuple[bytes, str]:
+    """Đọc giới hạn MAX_AUDIO_BYTES + 1 để chống tràn RAM (OOM) và kiểm tra định dạng âm thanh."""
+    filename = file.filename or "audio.wav"
+    content = file.file.read(cfg.MAX_AUDIO_BYTES + 1)
+    try:
+        speech.validate_audio_bytes(content, filename=filename)
+    except speech.AudioTooLargeError as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    except speech.UnsupportedAudioFormatError as e:
+        raise HTTPException(status_code=415, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return content, filename
 
 
-@app.post("/stt", summary="Nhận dạng giọng nói (Hỗ trợ Baseline vs Optimized)")
+@app.post("/stt", summary="Chuyển giọng nói thành văn bản (Dành cho nút Mic ghi âm)")
 def speech_to_text(
     file: UploadFile = File(...),
-    optimized: bool = True,  # Tham số Query: ?optimized=true hoặc ?optimized=false
 ):
     """
-    - Khai báo 'def' đồng bộ để FastAPI đưa vào ThreadPool, không làm đơ Event Loop.
-    - Giới hạn tối đa 5MB chống tràn RAM/OOM Container.
-    - optimized=true: VAD + Từ điển Học vụ + Sửa lỗi đồng âm A00, GPA.
-    - optimized=false: Baseline gọi Whisper gốc không tiền/hậu xử lý.
+    Nhận file ghi âm từ người dùng, kiểm tra bảo mật (<= 5MB & Magic Bytes),
+    thực hiện VAD lọc khoảng lặng + Groq Whisper + HSU Phonetic Post-Correction.
     """
+    content, filename = _read_and_validate_audio(file)
     try:
-        # Chặn cứng file vượt quá 5MB
-        content = file.file.read(cfg.MAX_AUDIO_BYTES + 1)
-        if len(content) > cfg.MAX_AUDIO_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Dung lượng file vượt quá giới hạn tối đa ({cfg.MAX_AUDIO_BYTES // (1024 * 1024)}MB)",
-            )
-
-        filename = file.filename or "audio.wav"
-        result = speech.transcribe_speech(
-            content,
-            filename=filename,
-            enable_vad=optimized,
-            enable_domain_prompt=optimized,
-            enable_phonetic_fix=optimized,
-        )
-        return {
-            "mode": "optimized" if optimized else "baseline",
-            **result,
-        }
+        return speech.transcribe_speech(content, filename=filename)
     except HTTPException:
         raise
     except Exception as e:
-        log.exception("Lỗi STT:")
-        raise HTTPException(status_code=500, detail=f"Lỗi STT: {e}")
+        log.exception("Lỗi xử lý STT")
+        raise HTTPException(status_code=500, detail=f"Lỗi nhận diện giọng nói: {str(e)}")
 
 
-@app.post("/tts/split", summary="Tách văn bản thành danh sách câu đã chuẩn hóa")
-def split_sentences(payload: SplitSentencesRequest):
-    """Giúp Frontend nhận danh sách câu để phát gối đầu (prefetching) từng câu."""
-    norm_text = speech.normalize_academic_text(payload.text, enable_academic_norm=True)
-    sentences = speech.split_into_sentences(norm_text)
-    return {"sentences": sentences}
+@app.post(
+    "/ask/voice/stream",
+    summary="Upload file âm thanh câu hỏi và nhận trực tiếp luồng câu trả lời RAG (SSE)",
+)
+def ask_voice_stream(
+    file: UploadFile = File(...),
+    top_k: int = Form(cfg.TOP_K_RERANK),
+    mode: Literal["dense", "hybrid", "hybrid_rerank"] = Form(cfg.RAG_MODE),
+    kho: Optional[str] = Form(None),
+    reference_date: Optional[date] = Form(None),
+):
+    """
+    Luồng 1 (Upload File Âm thanh -> Hỏi trực tiếp):
+      1. Kiểm tra bảo mật file âm thanh (<= 5MB, đúng định dạng audio).
+      2. Chuyển âm thanh thành văn bản qua `speech.transcribe_speech`.
+      3. Đưa thẳng văn bản câu hỏi vào pipeline RAG (`find_hits` + `generate_answer_stream`).
+      4. Trả về luồng SSE gồm: `transcription` -> `sources` -> `delta` (nhiều lần) -> `[DONE]`.
+    """
+    content, filename = _read_and_validate_audio(file)
+    try:
+        stt_result = speech.transcribe_speech(content, filename=filename)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Lỗi xử lý STT trong /ask/voice/stream")
+        raise HTTPException(status_code=500, detail=f"Lỗi nhận diện giọng nói: {str(e)}")
+
+    question = (stt_result.get("text") or "").strip()
+    if not stt_result.get("is_speech") or not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Không nhận diện được giọng nói trong file âm thanh. Vui lòng chọn file có tiếng nói rõ ràng.",
+        )
+
+    with _pipeline_errors():
+        hits = qm.find_hits(
+            question,
+            top_k=top_k,
+            mode=mode,
+            kho=kho,
+            reference_date=reference_date,
+        )
+        chunks = qm.generate_answer_stream(question, hits) if hits else iter([qm.NO_RESULT_ANSWER])
+    sources = [s.model_dump() for s in _sources(hits)]
+
+    def events():
+        yield _sse({"event": "transcription", "text": question})
+        yield _sse({"event": "sources", "in_scope": bool(hits), "sources": sources})
+        try:
+            for text in chunks:
+                yield _sse({"event": "delta", "text": text})
+        except Exception as e:
+            yield _sse({"event": "error", "detail": f"Loi khi goi LLM: {e}"})
+            return
+        yield _sse("[DONE]")
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
-@app.post("/tts", summary="Tổng hợp giọng nói (Hỗ trợ Baseline vs Optimized)")
+@app.post("/tts", summary="Đọc nội dung câu trả lời của AI thành giọng nói Tiếng Việt (MP3 Stream)")
 async def text_to_speech(payload: TTSRequest):
     """
-    - payload.optimized=true: Lọc bỏ nhãn [file.pdf], chuẩn hóa 15/30, 3.60, THPT.
-    - payload.optimized=false: Đọc thô nguyên bản văn bản nhận được.
+    Luồng 3: Chuẩn hóa các ký hiệu viết tắt học vụ HSU (QĐ-ĐHHS, HSU, SV, >= 2.5/4.0...)
+    và stream trực tiếp dữ liệu MP3 về cho trình duyệt phát.
     """
+    raw_text = (payload.text or "").strip()
+    if not raw_text:
+        raise HTTPException(status_code=400, detail="Văn bản cần đọc không được để trống.")
+
     try:
-        text_to_read = speech.normalize_academic_text(
-            payload.text, enable_academic_norm=payload.optimized
+        processed_text = speech.normalize_academic_text(raw_text)
+        if not processed_text:
+            raise HTTPException(status_code=400, detail="Văn bản sau chuẩn hóa rỗng.")
+
+        mp3_bytes = await speech.synthesize_speech_bytes(
+            text=processed_text,
+            voice=payload.voice or cfg.TTS_VOICE,
         )
-        voice = payload.voice or cfg.TTS_VOICE
-        return StreamingResponse(
-            speech.synthesize_speech_stream(text_to_read, voice=voice),
+        return Response(
+            content=mp3_bytes,
             media_type="audio/mpeg",
-            headers={"Cache-Control": "no-cache"},
+            headers={"Cache-Control": "no-store"},
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        log.exception("Lỗi TTS:")
-        raise HTTPException(status_code=500, detail=f"Lỗi TTS: {e}")
+        log.exception("Lỗi xử lý TTS")
+        raise HTTPException(status_code=500, detail=f"Lỗi tổng hợp giọng nói: {str(e)}")

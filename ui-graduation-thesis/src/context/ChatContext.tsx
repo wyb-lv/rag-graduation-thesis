@@ -1,9 +1,8 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import type { Conversation, Message, User, SourceCitation } from '@/types'
 import rawData from '@/data/conversations.json'
-import {askQuestionStream} from "@/services/conversationService.ts";
+import { askQuestionStream, askVoiceStream } from '@/services/conversationService'
 
-// import { askQuestion } from '@/services/conversationService'
 export type RightSidebarTab = 'hidden' | 'sources' | 'detail'
 
 interface ChatContextType {
@@ -33,12 +32,13 @@ interface ChatContextType {
   selectConversation: (id: string) => void
   startNewChat: () => void
   sendMessage: (content: string) => Promise<void>
+  sendVoiceMessage: (file: File, durationSec: number) => Promise<void>
 }
 
 const ChatContext = createContext<ChatContextType | null>(null)
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
+  const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
   const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>('hidden')
   const [selectedSourceIndex, setSelectedSourceIndex] = useState(0)
 
@@ -70,7 +70,6 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
     setActiveId(id)
     const conv = conversations.find((c) => c.id === id)
     setCurrentMessages(conv?.messages || [])
-    // Reset sources theo tin nhắn cuối cùng của hội thoại đó nếu có
     const lastMsgWithSources = conv?.messages.slice().reverse().find((m) => m.sources && m.sources.length > 0)
     if (lastMsgWithSources?.sources) {
       setSources(lastMsgWithSources.sources)
@@ -82,6 +81,7 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
     setCurrentMessages([])
     setRightSidebarTab('hidden')
   }
+
   const sendMessage = async (content: string) => {
     const userMsg: Message = { id: `user-${Date.now()}`, role: 'user', content }
     const botMsgId = `assistant-${Date.now()}`
@@ -133,7 +133,6 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
       )
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Có lỗi xảy ra'
-      // Giữ phần đã stream được (nếu có) và nối thông báo lỗi vào chính tin nhắn đang stream
       const errorContent = `${accumulatedContent ? `${accumulatedContent}\n\n` : ''}Xin lỗi, đã xảy ra lỗi: ${errMsg}`
       const errorMsg: Message = { id: botMsgId, role: 'assistant', content: errorContent, sources: latestSources }
       setCurrentMessages((prev) => prev.map((msg) => (msg.id === botMsgId ? errorMsg : msg)))
@@ -145,65 +144,94 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
     }
   }
 
-  // const sendMessage = async (content: string) => {
-  //   const userMsg: Message = {
-  //     id: `user-${Date.now()}`,
-  //     role: 'user',
-  //     content,
-  //   }
-  //
-  //   // 1. Cập nhật ngay tin nhắn của người dùng lên UI
-  //   const updatedMessages = [...currentMessages, userMsg]
-  //   setCurrentMessages(updatedMessages)
-  //   setIsLoading(true)
-  //
-  //   // 2. Tự động đồng bộ hoặc tạo đoạn chat mới trong danh sách bên trái
-  //   let currentChatId = activeId
-  //   if (!currentChatId) {
-  //     currentChatId = `chat-${Date.now()}`
-  //     setActiveId(currentChatId)
-  //     const newConv: Conversation = {
-  //       id: currentChatId,
-  //       title: content.slice(0, 30),
-  //       messages: updatedMessages,
-  //     }
-  //     setConversations((prev) => [newConv, ...prev])
-  //   } else {
-  //     setConversations((prev) =>
-  //       prev.map((c) => (c.id === currentChatId ? { ...c, messages: updatedMessages } : c))
-  //     )
-  //   }
-  //
-  //   try {
-  //     // 3. Gọi API (kèm fallback mock)
-  //     const res = await askQuestion(content)
-  //     const botMsg: Message = {
-  //       id: `assistant-${Date.now()}`,
-  //       role: 'assistant',
-  //       content: res.answer,
-  //       sources: res.sources,
-  //     }
-  //
-  //     const finalMessages = [...updatedMessages, botMsg]
-  //     setCurrentMessages(finalMessages)
-  //     setSources(res.sources)
-  //
-  //     // Cập nhật lại lịch sử với câu trả lời của bot
-  //     setConversations((prev) =>
-  //       prev.map((c) => (c.id === currentChatId ? { ...c, messages: finalMessages } : c))
-  //     )
-  //   } catch (err: unknown) {
-  //     const errMsg = err instanceof Error ? err.message : 'Có lỗi xảy ra'
-  //     const errorMsg: Message = {
-  //       id: `assistant-err-${Date.now()}`,
-  //       role: 'assistant',
-  //       content: `Xin lỗi, đã xảy ra lỗi: ${errMsg}`,
-  //     }
-  //     setCurrentMessages([...updatedMessages, errorMsg])
-  //   } finally {
-  //     setIsLoading(false)
-  //   }
-  // }
+  /**
+   * Luồng 1: Người dùng chọn file âm thanh và bấm Gửi:
+   * - Hiện ngay bong bóng tin nhắn Voice bên phải (có nút Play/Pause nghe lại kèm thời lượng đoạn voice).
+   * - Gửi file lên POST /ask/voice/stream để server tách chữ và gọi thẳng sang ask/stream.
+   */
+  const sendVoiceMessage = async (file: File, durationSec: number) => {
+    const audioUrl = URL.createObjectURL(file)
+    const userMsgId = `user-voice-${Date.now()}`
+    const userMsg: Message = {
+      id: userMsgId,
+      role: 'user',
+      content: file.name,
+      audioUrl,
+      audioDuration: durationSec,
+      audioFileName: file.name,
+    }
+    const botMsgId = `assistant-${Date.now()}`
+    const botMsgPlaceholder: Message = { id: botMsgId, role: 'assistant', content: '', sources: [] }
+    const updatedMessages = [...currentMessages, userMsg, botMsgPlaceholder]
+    setCurrentMessages(updatedMessages)
+    setIsLoading(true)
+
+    let currentChatId = activeId
+    if (!currentChatId) {
+      currentChatId = `chat-${Date.now()}`
+      setActiveId(currentChatId)
+      const newConv: Conversation = {
+        id: currentChatId,
+        title: `Tin nhắn thoại (${file.name.slice(0, 18)})`,
+        messages: updatedMessages,
+      }
+      setConversations((prev) => [newConv, ...prev])
+    }
+
+    let accumulatedContent = ''
+    let latestSources: SourceCitation[] = []
+
+    try {
+      await askVoiceStream(file, {
+        onTranscription: (transcribedText) => {
+          if (transcribedText) {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === currentChatId && c.title.startsWith('Tin nhắn thoại')
+                  ? { ...c, title: transcribedText.slice(0, 30) }
+                  : c
+              )
+            )
+          }
+        },
+        onSources: (incomingSources) => {
+          latestSources = incomingSources
+          setSources(incomingSources)
+          setCurrentMessages((prev) =>
+            prev.map((msg) => (msg.id === botMsgId ? { ...msg, sources: incomingSources } : msg))
+          )
+        },
+        onDelta: (deltaText) => {
+          accumulatedContent += deltaText
+          setCurrentMessages((prev) =>
+            prev.map((msg) => (msg.id === botMsgId ? { ...msg, content: accumulatedContent } : msg))
+          )
+        },
+      })
+
+      const finalBotMsg: Message = {
+        id: botMsgId,
+        role: 'assistant',
+        content: accumulatedContent,
+        sources: latestSources,
+      }
+
+      const finalConversationMessages = [...currentMessages, userMsg, finalBotMsg]
+      setConversations((prev) =>
+        prev.map((c) => (c.id === currentChatId ? { ...c, messages: finalConversationMessages } : c))
+      )
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Có lỗi xảy ra khi xử lý file âm thanh'
+      const errorContent = `${accumulatedContent ? `${accumulatedContent}\n\n` : ''}Xin lỗi, đã xảy ra lỗi: ${errMsg}`
+      const errorMsg: Message = { id: botMsgId, role: 'assistant', content: errorContent, sources: latestSources }
+      setCurrentMessages((prev) => prev.map((msg) => (msg.id === botMsgId ? errorMsg : msg)))
+      setConversations((prev) =>
+        prev.map((c) => (c.id === currentChatId ? { ...c, messages: [...currentMessages, userMsg, errorMsg] } : c))
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   return (
     <ChatContext.Provider
@@ -225,6 +253,7 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
         selectConversation,
         startNewChat,
         sendMessage,
+        sendVoiceMessage,
       }}
     >
       {children}

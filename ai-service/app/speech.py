@@ -1,249 +1,289 @@
-"""Module xử lý Voice: VAD cắt khoảng lặng, Whisper STT với Từ điển Học vụ, 
-Sửa lỗi đồng âm tiếng Việt, Chuẩn hóa văn bản pháp quy và Tổng hợp TTS.
-"""
 import io
-import logging
-import os
+import math
 import re
-import time
+import struct
 import wave
-from typing import AsyncGenerator, List, Optional, Tuple
+from typing import AsyncIterator, Dict, Any, List, Tuple
 
 import edge_tts
-import numpy as np
 
-from . import config as cfg
-from . import groq_client
+from . import config
+from .groq_client import get_client as get_groq_client
 
-log = logging.getLogger("uvicorn.error")
 
-# ── 1. Từ điển Ngữ cảnh Học vụ (Domain Lexicon Prompt cho Whisper) ───────────
-# Giúp Whisper định hướng xác suất âm học về các từ khóa đặc thù trường đại học
+class AudioTooLargeError(ValueError):
+    """File âm thanh vượt quá dung lượng tối đa cho phép (MAX_AUDIO_BYTES)."""
+
+
+class UnsupportedAudioFormatError(ValueError):
+    """Định dạng file không phải là âm thanh hợp lệ."""
+
+
+# ==============================================================================
+# 1. HẰNG SỐ DOMAIN LEXICON & PHONETIC CORRECTION (DÀNH CHO STT HỌC VỤ HSU)
+# ==============================================================================
 DOMAIN_PROMPT = (
-    "Học bổng khuyến khích, điểm rèn luyện, GPA, tín chỉ, học kỳ, tổ hợp xét tuyển "
-    "A00, A01, B00, C00, D01, chứng chỉ IELTS, TOEIC, THPT, Trường Đại học Hoa Sen, HSU, "
-    "học phần, điểm F, thi lại, miễn giảm học phí, trợ cấp xã hội, xét tuyển học bạ."
+    "HSU, Đại học Hoa Sen, tín chỉ, học phần, "
+    "rút học phần, học phí, học bổng, điểm rèn luyện, GPA, điểm trung bình tích lũy, "
+    "khóa luận tốt nghiệp, thực tập doanh nghiệp, chuẩn đầu ra, TOEIC, bảo lưu, "
+    "cảnh báo học vụ, buộc thôi học, niên chế, học kỳ, đăng ký học phần, "
+    "phòng Đào tạo, công tác sinh viên, quy chế đào tạo."
 )
 
-# ── 2. Bảng quy tắc sửa lỗi nhận dạng đồng âm tiếng Việt ──────────────────────
+# Bảng luật sửa lỗi đồng âm / phát âm địa phương sang thuật ngữ học vụ chuẩn
 PHONETIC_RULES: List[Tuple[re.Pattern, str]] = [
-    # Tổ hợp môn xét tuyển
-    (re.compile(r"\b(tổ\s*hợp\s+)?a\s*(0|không|khong)\s*(0|không|khong)\b", re.IGNORECASE), "A00"),
-    (re.compile(r"\b(tổ\s*hợp\s+)?a\s*(0|không|khong)\s*(1|một|mot)\b", re.IGNORECASE), "A01"),
-    (re.compile(r"\b(tổ\s*hợp\s+)?b\s*(0|không|khong)\s*(0|không|khong)\b", re.IGNORECASE), "B00"),
-    (re.compile(r"\b(tổ\s*hợp\s+)?d\s*(0|không|khong)\s*(1|một|mot)\b", re.IGNORECASE), "D01"),
-    (re.compile(r"\b(tổ\s*hợp\s+)?c\s*(0|không|khong)\s*(0|không|khong)\b", re.IGNORECASE), "C00"),
-    # Điểm số & Thuật ngữ tiếng Anh
-    (re.compile(r"\b(gờ\s*pê\s*a|di\s*pi\s*ây|d\s*p\s*a|ji\s*pi\s*ây)\b", re.IGNORECASE), "GPA"),
-    (re.compile(r"\b(ai\s*eo|ai\s*el|ai\s*en|ai\s*oét)\b", re.IGNORECASE), "IELTS"),
-    (re.compile(r"\b(tô\s*ích|tô\s*ít|toe\s*ic)\b", re.IGNORECASE), "TOEIC"),
-    (re.compile(r"\b(điểm\s+)?(ép|e-pờ|f|ef)\b", re.IGNORECASE), "điểm F"),
-    # Tên trường
-    (re.compile(r"\b(đại\s*học\s+)?(hoa\s*xem|hoa\s*sơn)\b", re.IGNORECASE), "Hoa Sen"),
+    (re.compile(r"\btính\s+chỉ\b", re.IGNORECASE), "tín chỉ"),
+    (re.compile(r"\btín\s+chĩ\b", re.IGNORECASE), "tín chỉ"),
+    (re.compile(r"\bhọc\s+bỗng\b", re.IGNORECASE), "học bổng"),
+    (re.compile(r"\bđiểm\s+rèn\s+liện\b", re.IGNORECASE), "điểm rèn luyện"),
+    (re.compile(r"\bkhóa\s+lận\b", re.IGNORECASE), "khóa luận"),
+    (re.compile(r"\bbão\s+lưu\b", re.IGNORECASE), "bảo lưu"),
+    (re.compile(r"\bquy\s+chế\s+tín\s+chĩ\b", re.IGNORECASE), "quy chế tín chỉ"),
+    (re.compile(r"\bhắt\s*ét\s*u\b", re.IGNORECASE), "HSU"),
+    (re.compile(r"\bhắt\s*ét\s*iu\b", re.IGNORECASE), "HSU"),
+    (re.compile(r"\bgi\s*pi\s*ây\b", re.IGNORECASE), "GPA"),
+    (re.compile(r"\btô\s*ích\b", re.IGNORECASE), "TOEIC"),
 ]
 
+# ==============================================================================
+# 2. HẰNG SỐ CHUẨN HÓA VĂN BẢN HỌC VỤ (DÀNH CHO TTS PHÁP QUY HSU)
+# ==============================================================================
+ACADEMIC_TTS_RULES: List[Tuple[re.Pattern, str]] = [
+    # Ký hiệu pháp quy / văn bản hành chính HSU
+    (re.compile(r"\bQĐ-ĐHHS\b"), "Quyết định Đại học Hoa Sen"),
+    (re.compile(r"\bTB-ĐHHS\b"), "Thông báo Đại học Hoa Sen"),
+    (re.compile(r"\bĐHHS\b"), "Đại học Hoa Sen"),
+    (re.compile(r"\bHSU\b"), "Đại học Hoa Sen"),
+    (re.compile(r"\bTP\.\s*HCM\b", re.IGNORECASE), "Thành phố Hồ Chí Minh"),
+    (re.compile(r"\bTPHCM\b", re.IGNORECASE), "Thành phố Hồ Chí Minh"),
+    (re.compile(r"\bSV\b"), "sinh viên"),
+    (re.compile(r"\bGV\b"), "giảng viên"),
+    (re.compile(r"\bCNTT\b"), "Công nghệ thông tin"),
+    (re.compile(r"\bKLTN\b"), "khóa luận tốt nghiệp"),
+    (re.compile(r"\bĐRL\b"), "điểm rèn luyện"),
+    (re.compile(r"\bĐTBCTL\b"), "điểm trung bình chung tích lũy"),
+    (re.compile(r"\bĐTBHK\b"), "điểm trung bình học kỳ"),
+    (re.compile(r"\bTC\b"), "tín chỉ"),
+    (re.compile(r"\bHP\b"), "học phần"),
+    # Xử lý dấu gạch chéo trong năm học và mã quyết định
+    (re.compile(r"(\d{4})\s*-\s*(\d{4})"), r"\1 đến \2"),
+    (re.compile(r"\b(\d+)\s*/\s*(QĐ|TB|KH|HD)\b"), r"\1 \2"),
+    # Ký hiệu so sánh & phần trăm
+    (re.compile(r">=\s*(\d+(?:[.,]\d+)?)"), r"lớn hơn hoặc bằng \1"),
+    (re.compile(r"<=\s*(\d+(?:[.,]\d+)?)"), r"nhỏ hơn hoặc bằng \1"),
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*%"), r"\1 phần trăm"),
+    # Đọc điểm số thập phân kiểu 2.5 / 4.0
+    (re.compile(r"(\d+)\.(\d+)\s*/\s*(\d+)\.(\d+)"), r"\1 chấm \2 trên \3 chấm \4"),
+    # Loại bỏ ký tự trang trí Markdown làm TTS đọc ngắc ngứ
+    (re.compile(r"[*_`#>-]{2,}"), " "),
+    (re.compile(r"\[([^\]]+)\]\([^)]+\)"), r"\1"),
+]
 
-def apply_phonetic_fix(text: str, *, enable_phonetic_fix: bool = True) -> str:
-    """Sửa lỗi đồng âm các thuật ngữ học vụ thường bị STT nhận dạng sai."""
-    if not enable_phonetic_fix or not text:
-        return text
-
-    corrected = text
-    for pattern, replacement in PHONETIC_RULES:
-        corrected = pattern.sub(replacement, corrected)
-    return re.sub(r"\s+", " ", corrected).strip()
+ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".mp4", ".webm", ".ogg", ".flac", ".mpeg", ".mpga"}
 
 
-# ── 3. Thuật toán VAD cắt khoảng lặng & lọc ồn (Dùng thư viện chuẩn + NumPy) ─
-def preprocess_audio_vad(
-    audio_bytes: bytes,
-    *,
-    enable_vad: bool = True,
-) -> Tuple[bytes, bool, float]:
-    """Cắt khoảng lặng đầu/cuối và kiểm tra có tiếng người hay không.
-    
-    Trả về: (audio_bytes_đã_lọc, is_speech: bool, trimmed_ms: float)
-    - Chỉ chạy với file .wav (PCM 16-bit). Nếu là .mp3/.webm thì giữ nguyên byte.
+def _has_valid_audio_signature(data: bytes) -> bool:
+    """Kiểm tra Magic Bytes nhận diện các định dạng container âm thanh phổ biến."""
+    if len(data) < 4:
+        return False
+    # WAV: RIFF....WAVE
+    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WAVE":
+        return True
+    # MP3: ID3 tag hoặc MPEG sync word (0xFFE0 mask)
+    if data.startswith(b"ID3") or (data[0] == 0xFF and (data[1] & 0xE0) == 0xE0):
+        return True
+    # OGG / Opus / Vorbis
+    if data.startswith(b"OggS"):
+        return True
+    # FLAC
+    if data.startswith(b"fLaC"):
+        return True
+    # WebM / Matroska (EBML header)
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return True
+    # MP4 / M4A / AAC (ISO Base Media File Format: ....ftyp)
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return True
+    return False
+
+
+def validate_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav") -> None:
     """
-    if not enable_vad or not audio_bytes:
-        return audio_bytes, True, 0.0
+    Kiểm tra tính hợp lệ và bảo mật của dữ liệu âm thanh đầu vào:
+      - Không được rỗng (ValueError -> HTTP 400).
+      - Không vượt quá MAX_AUDIO_BYTES 5MB (AudioTooLargeError -> HTTP 413).
+      - Phải đúng Magic Bytes âm thanh hợp lệ (UnsupportedAudioFormatError -> HTTP 415).
+    """
+    if not audio_bytes:
+        raise ValueError("File âm thanh rỗng.")
 
-    # Kiểm tra Header RIFF/WAVE
-    if not audio_bytes.startswith(b"RIFF") or b"WAVE" not in audio_bytes[:16]:
-        return audio_bytes, True, 0.0
+    if len(audio_bytes) > config.MAX_AUDIO_BYTES:
+        max_mb = config.MAX_AUDIO_BYTES / (1024 * 1024)
+        raise AudioTooLargeError(f"File âm thanh vượt quá giới hạn tối đa {max_mb:.1f} MB.")
+
+    if not _has_valid_audio_signature(audio_bytes):
+        raise UnsupportedAudioFormatError(
+            f"Định dạng file '{filename}' không được hỗ trợ hoặc không phải là file âm thanh hợp lệ "
+            "(chỉ chấp nhận WAV, MP3, M4A, WebM, OGG, FLAC)."
+        )
+
+
+def apply_phonetic_fix(text: str) -> str:
+    """Sửa lỗi đồng âm / phát âm địa phương sang từ vựng học vụ chuẩn."""
+    if not text:
+        return text
+    result = text
+    for pattern, replacement in PHONETIC_RULES:
+        result = pattern.sub(replacement, result)
+    return re.sub(r"\s+", " ", result).strip()
+
+
+def _compute_rms_db(pcm_bytes: bytes, sample_width: int) -> float:
+    """Tính năng lượng âm thanh RMS (dBFS) cho frame PCM 16-bit."""
+    if not pcm_bytes or sample_width != 2:
+        return 0.0
+    count = len(pcm_bytes) // 2
+    if count == 0:
+        return -100.0
+    shorts = struct.unpack(f"<{count}h", pcm_bytes[: count * 2])
+    sum_sq = sum(s * s for s in shorts)
+    rms = math.sqrt(sum_sq / count) / 32768.0
+    return 20.0 * math.log10(max(rms, 1e-9))
+
+
+def preprocess_audio_vad(audio_bytes: bytes) -> Tuple[bytes, bool]:
+    """
+    Lọc khoảng lặng đầu/cuối và kiểm tra có tiếng nói hay không (Voice Activity Detection).
+    Chỉ áp dụng trực tiếp trên định dạng WAV chuẩn PCM 16-bit; các định dạng nén (webm/mp3/ogg/m4a)
+    sẽ đi thẳng qua nếu dung lượng vượt ngưỡng tối thiểu.
+    Trả về: (processed_bytes, is_speech)
+    """
+    if len(audio_bytes) < 512:
+        return audio_bytes, False
+
+    if not audio_bytes.startswith(b"RIFF"):
+        return audio_bytes, True
 
     try:
         with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
-            channels = wf.getnchannels()
+            n_channels = wf.getnchannels()
             sample_width = wf.getsampwidth()
             framerate = wf.getframerate()
             n_frames = wf.getnframes()
-            raw_frames = wf.readframes(n_frames)
 
-        # Chỉ xử lý PCM 16-bit (sample_width == 2)
-        if sample_width != 2 or framerate <= 0 or n_frames == 0:
-            return audio_bytes, True, 0.0
+            if sample_width != 2 or n_frames == 0:
+                return audio_bytes, True
 
-        samples = np.frombuffer(raw_frames, dtype=np.int16)
-        if channels > 1:
-            samples = samples.reshape(-1, channels).mean(axis=1).astype(np.int16)
+            frame_ms = 30
+            frames_per_chunk = max(1, int(framerate * frame_ms / 1000))
+            bytes_per_frame = n_channels * sample_width
 
-        total_ms = (len(samples) / framerate) * 1000.0
-        frame_len = int(framerate * (cfg.VAD_FRAME_MS / 1000.0))
-        if frame_len <= 0:
-            return audio_bytes, True, 0.0
+            raw_pcm = wf.readframes(n_frames)
+            chunk_byte_size = frames_per_chunk * bytes_per_frame
+            chunks = [
+                raw_pcm[i : i + chunk_byte_size]
+                for i in range(0, len(raw_pcm), chunk_byte_size)
+            ]
 
-        n_chunks = len(samples) // frame_len
-        if n_chunks == 0:
-            return audio_bytes, True, 0.0
+            voiced_indices = [
+                idx
+                for idx, chunk in enumerate(chunks)
+                if _compute_rms_db(chunk, sample_width) > config.STT_VAD_ENERGY_THRESHOLD_DB
+            ]
 
-        # Tính năng lượng RMS (Root Mean Square) chuẩn hóa về [0, 1]
-        chunks = samples[: n_chunks * frame_len].reshape(n_chunks, frame_len).astype(np.float32)
-        rms = np.sqrt(np.mean((chunks / 32768.0) ** 2, axis=1))
-        speech_mask = rms >= cfg.VAD_ENERGY_THRESHOLD
+            if not voiced_indices:
+                return audio_bytes, False
 
-        speech_indices = np.where(speech_mask)[0]
-        # Không có khung nào đạt ngưỡng hoặc tổng thời gian nói < ngưỡng tối thiểu
-        if len(speech_indices) == 0:
-            return b"", False, total_ms
+            start_idx = max(0, voiced_indices[0] - 2)
+            end_idx = min(len(chunks), voiced_indices[-1] + 3)
+            trimmed_pcm = b"".join(chunks[start_idx:end_idx])
 
-        speech_duration_ms = len(speech_indices) * cfg.VAD_FRAME_MS
-        if speech_duration_ms < cfg.VAD_MIN_SPEECH_MS:
-            return b"", False, total_ms
+            out_buf = io.BytesIO()
+            with wave.open(out_buf, "wb") as out_wf:
+                out_wf.setnchannels(n_channels)
+                out_wf.setsampwidth(sample_width)
+                out_wf.setframerate(framerate)
+                out_wf.writeframes(trimmed_pcm)
 
-        # Thêm đệm 100ms trước và sau để không bị cụt âm tiết đầu/cuối
-        pad_frames = int(100 / cfg.VAD_FRAME_MS)
-        start_idx = max(0, speech_indices[0] - pad_frames) * frame_len
-        end_idx = min(len(samples), (speech_indices[-1] + 1 + pad_frames) * frame_len)
-
-        trimmed_samples = samples[start_idx:end_idx]
-        trimmed_ms = total_ms - ((len(trimmed_samples) / framerate) * 1000.0)
-
-        # Đóng gói lại thành file WAV hợp lệ
-        out_buf = io.BytesIO()
-        with wave.open(out_buf, "wb") as out_wf:
-            out_wf.setnchannels(1)
-            out_wf.setsampwidth(2)
-            out_wf.setframerate(framerate)
-            out_wf.writeframes(trimmed_samples.tobytes())
-
-        return out_buf.getvalue(), True, max(0.0, trimmed_ms)
-
-    except Exception as e:
-        log.warning(f"Lỗi khi chạy VAD trên WAV: {e}, bỏ qua VAD.")
-        return audio_bytes, True, 0.0
+            return out_buf.getvalue(), True
+    except Exception:
+        return audio_bytes, True
 
 
-# ── 4. Bộ điều phối Nhận dạng Giọng nói (STT) ─────────────────────────────────
 def transcribe_speech(
     audio_bytes: bytes,
     filename: str = "audio.wav",
-    *,
-    enable_vad: bool = True,
-    enable_domain_prompt: bool = True,
-    enable_phonetic_fix: bool = True,
-) -> dict:
-    """Xử lý nhận dạng âm thanh thành văn bản với đầy đủ thông số đo lường."""
-    start_time = time.perf_counter()
+) -> Dict[str, Any]:
+    """
+    Chuyển giọng nói thành văn bản (STT) qua 3 tầng:
+      1. Kiểm tra bảo mật & VAD lọc khoảng lặng, chặn nhiễu rỗng trước khi gọi API.
+      2. Groq Whisper kèm Domain Prompt từ vựng học vụ HSU.
+      3. Hậu xử lý ngữ âm (Phonetic Post-Correction).
+    """
+    validate_audio_bytes(audio_bytes, filename=filename)
 
-    # Bước 1: VAD Lọc khoảng lặng & chặn file rỗng/tiếng ồn
-    processed_bytes, is_speech, trimmed_ms = preprocess_audio_vad(audio_bytes, enable_vad=enable_vad)
-    if not is_speech or len(processed_bytes) == 0:
+    processed_bytes, is_speech = preprocess_audio_vad(audio_bytes)
+    if not is_speech:
         return {
             "is_speech": False,
-            "raw_text": "",
-            "corrected_text": "",
-            "vad_trimmed_ms": round(trimmed_ms, 2),
-            "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+            "text": "",
         }
 
-    # Bước 2: Gọi Groq Whisper
-    # Lưu ý: Whisper dùng get_client() nhưng KHÔNG dùng chung RateLimiter TPM của Qwen
-    client = groq_client.get_client()
-    clean_name = filename if filename and "." in filename else "audio.wav"
-    file_tuple = (clean_name, processed_bytes)
+    client = get_groq_client()
+    audio_file = (filename, io.BytesIO(processed_bytes))
 
-    prompt = DOMAIN_PROMPT if enable_domain_prompt else None
-    resp = client.audio.transcriptions.create(
-        file=file_tuple,
-        model=cfg.GROQ_STT_MODEL,
-        prompt=prompt,
-        language="vi",
+    transcription = client.audio.transcriptions.create(
+        file=audio_file,
+        model=config.STT_MODEL,
+        language=config.STT_LANGUAGE,
+        prompt=DOMAIN_PROMPT,
         response_format="json",
         temperature=0.0,
     )
-    raw_text = getattr(resp, "text", "") or ""
-    raw_text = raw_text.strip()
 
-    # Bước 3: Sửa lỗi đồng âm học vụ
-    final_text = apply_phonetic_fix(raw_text, enable_phonetic_fix=enable_phonetic_fix)
-    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+    raw_text = (getattr(transcription, "text", "") or "").strip()
+    text = apply_phonetic_fix(raw_text)
 
     return {
-        "is_speech": True,
-        "raw_text": raw_text,
-        "corrected_text": final_text,
-        "vad_trimmed_ms": round(trimmed_ms, 2),
-        "latency_ms": round(elapsed_ms, 2),
+        "is_speech": bool(text),
+        "text": text,
     }
 
 
-# ── 5. Chuẩn hóa Văn bản Quy chế & Tách câu cho TTS ──────────────────────────
-def normalize_academic_text(text: str, *, enable_academic_norm: bool = True) -> str:
-    """Lược bỏ nhãn file PDF, markdown và chuẩn hóa số điểm cho giọng đọc tự nhiên."""
-    if not enable_academic_norm or not text:
-        return text
-
-    s = text
-
-    # Xóa ký hiệu định dạng markdown
-    s = re.sub(r"[*#_`~>]", "", s)
-
-    # Chuyển trích dẫn [TenFile.pdf, Điều 1, Khoản 2] -> "theo Điều 1, Khoản 2"
-    s = re.sub(r"\[[^\]]*\.pdf,\s*([^\]]+)\]", r"theo \1", s, flags=re.IGNORECASE)
-    # Xóa các nhãn trích dẫn chỉ có tên file [TenFile.pdf]
-    s = re.sub(r"\[[^\]]*\.pdf[^\]]*\]", "", s, flags=re.IGNORECASE)
-
-    # Chuẩn hóa thang điểm phân số: "15/30" -> "15 trên 30"
-    s = re.sub(r"\b(\d+(?:[.,]\d+)?)\s*/\s*(10|30|100)\b", r"\1 trên \2", s)
-
-    # Chuẩn hóa dải điểm GPA: "3.60 - 4.00" -> "từ 3 chấm 60 đến 4 chấm 0"
-    def _norm_range(m):
-        return f"từ {m.group(1).replace('.', ' chấm ')} đến {m.group(2).replace('.', ' chấm ')}"
-
-    s = re.sub(r"\b(\d+\.\d{1,2})\s*[-–]\s*(\d+\.\d{1,2})\b", _norm_range, s)
-
-    # Số thập phân đơn lẻ: "3.60" -> "3 chấm 60"
-    s = re.sub(r"\b(\d+)\.(\d+)\b", r"\1 chấm \2", s)
-
-    # Mở rộng từ viết tắt phổ biến
-    s = re.sub(r"\bTHPT\b", "Trung học phổ thông", s)
-    s = re.sub(r"\bĐHCNTT\b", "Đại học Công nghệ Thông tin", s)
-    s = re.sub(r"\bĐH\b", "Đại học", s)
-    s = re.sub(r"\bQĐ\b", "Quyết định", s)
-    s = re.sub(r"\bGPA\b", "G P A", s)
-    s = re.sub(r"\bIELTS\b", "Ai-eo", s)
-    s = re.sub(r"\b(\d+)\s*%\b", r"\1 phần trăm", s)
-
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def split_into_sentences(text: str) -> List[str]:
-    """Tách đoạn văn thành từng câu hoàn chỉnh (tránh cắt nhầm số thập phân 3.60 hay Điều 1.)."""
+def normalize_academic_text(text: str) -> str:
+    """Chuẩn hóa ký hiệu viết tắt & mã văn bản học vụ HSU trước khi đưa vào bộ đọc TTS."""
     if not text:
-        return []
-    # Cắt theo dấu chấm, chấm phẩy, hai chấm, dấu hỏi, dấu than hoặc xuống dòng
-    raw_sentences = re.split(r"(?<=[.!?:;\n])\s+", text)
-    sentences = [s.strip() for s in raw_sentences if len(s.strip()) > 3]
-    return sentences if sentences else [text.strip()]
+        return ""
+    cleaned = text
+    for pattern, replacement in ACADEMIC_TTS_RULES:
+        cleaned = pattern.sub(replacement, cleaned)
+    cleaned = re.sub(r"[#*`_~]+", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 
-async def synthesize_speech_stream(
-    text: str, voice: Optional[str] = None
-) -> AsyncGenerator[bytes, None]:
-    """Stream từng chunk âm thanh MP3 từ Edge-TTS."""
-    v = voice or cfg.TTS_VOICE
-    communicate = edge_tts.Communicate(text, v)
+async def stream_speech_chunks(
+    text: str,
+    voice: str = config.TTS_VOICE,
+    rate: str = config.TTS_RATE,
+) -> AsyncIterator[bytes]:
+    """
+    Stream từng chunk âm thanh MP3 trực tiếp từ Edge-TTS Neural ngay khi vừa sinh ra,
+    giúp trình duyệt phát âm thanh đầu tiên (TTFA) nhanh mà không cần gom toàn bộ vào RAM.
+    """
+    communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
     async for chunk in communicate.stream():
-        if chunk.get("type") == "audio":
+        if chunk.get("type") == "audio" and chunk.get("data"):
             yield chunk["data"]
+
+
+async def synthesize_speech_bytes(
+    text: str,
+    voice: str = config.TTS_VOICE,
+    rate: str = config.TTS_RATE,
+) -> bytes:
+    """Tổng hợp giọng nói Tiếng Việt (Edge-TTS Neural) và trả về toàn bộ buffer MP3."""
+    audio_chunks = bytearray()
+    async for data in stream_speech_chunks(text=text, voice=voice, rate=rate):
+        audio_chunks.extend(data)
+    return bytes(audio_chunks)

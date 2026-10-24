@@ -1,9 +1,22 @@
 import type { SourceCitation } from '@/types'
 import rawData from '@/data/conversations.json'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '')
 
-// Khớp với Source trong ai-service/api.py
+/**
+ * Chuẩn hóa URL gọi tới AI Service:
+ * - Nếu gọi trực tiếp vào ai-service (port 8000) hoặc đã có sẵn `/api/ai` -> nối thẳng path (`/ask/stream`, `/stt`, `/tts`)
+ * - Nếu gọi qua API Gateway (port 9090) -> tự động gắn tiền tố `/api/ai` (`/api/ai/ask/stream`, `/api/ai/stt`, `/api/ai/tts`)
+ */
+export function buildAiUrl(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  if (API_BASE_URL.endsWith('/api/ai') || API_BASE_URL.includes(':8000')) {
+    return `${API_BASE_URL}${cleanPath}`
+  }
+  return `${API_BASE_URL}/api/ai${cleanPath}`
+}
+
+// Khớp với Source trong ai-service/app/api.py
 interface RawApiSource {
   source: string
   text: string
@@ -12,13 +25,15 @@ interface RawApiSource {
   payload: Record<string, unknown>
 }
 
-// Các sự kiện `data:` của POST /ask/stream (xem ai-service/API.md)
+// Các sự kiện `data:` của POST /ask/stream và POST /ask/voice/stream
 type StreamEvent =
+  | { event: 'transcription'; text: string }
   | { event: 'sources'; in_scope: boolean; sources: RawApiSource[] }
   | { event: 'delta'; text: string }
   | { event: 'error'; detail: string }
 
 export interface StreamCallbacks {
+  onTranscription?: (text: string) => void
   onSources?: (sources: SourceCitation[], inScope: boolean) => void
   onDelta?: (text: string) => void
 }
@@ -29,6 +44,11 @@ export interface AskOptions {
   kho?: string
   reference_date?: string // YYYY-MM-DD
   signal?: AbortSignal
+}
+
+export interface SttResponse {
+  is_speech: boolean
+  text: string
 }
 
 function mapSources(sources: RawApiSource[]): SourceCitation[] {
@@ -43,43 +63,8 @@ function mapSources(sources: RawApiSource[]): SourceCitation[] {
   }))
 }
 
-/**
- * Gọi POST /ask/stream và đọc SSE: `sources` một lần, `delta` nhiều lần, kết thúc bằng `[DONE]`.
- * Không kết nối được backend -> trả lời mô phỏng. Server báo lỗi (HTTP 4xx/5xx, sự kiện `error`,
- * stream đứt trước [DONE]) -> throw để UI hiển thị lỗi.
- */
-export async function askQuestionStream(
-  question: string,
-  callbacks: StreamCallbacks,
-  options: AskOptions = {}
-): Promise<void> {
-  const { onSources, onDelta } = callbacks
-  const { signal, ...params } = options
-
-  let res: Response
-  try {
-    res = await fetch(`${API_BASE_URL}/ask/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ question, ...params }),
-      signal,
-    })
-  } catch (err: unknown) {
-    if (signal?.aborted) throw err
-    console.warn(`[ChatHSU SSE] Không thể kết nối tới ${API_BASE_URL}/ask/stream:`, err)
-    // Fallback mô phỏng nếu chưa bật FastAPI Backend
-    onSources?.(rawData.sources as SourceCitation[], true)
-    onDelta?.(
-      `Mình đã nhận được câu hỏi: "${question}".\n\n(Lưu ý: Chưa thể kết nối tới FastAPI Backend tại ${API_BASE_URL}. Hãy chạy lệnh: \`uvicorn api:app --reload --port 8000\` để nhận câu trả lời dạng SSE stream từ mô hình RAG).`
-    )
-    return
-  }
-
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}))
-    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
-    throw new Error(detail || `Lỗi máy chủ (${res.status})`)
-  }
+async function consumeSseResponse(res: Response, callbacks: StreamCallbacks): Promise<void> {
+  const { onTranscription, onSources, onDelta } = callbacks
   if (!res.body) {
     throw new Error('Trình duyệt không hỗ trợ ReadableStream.')
   }
@@ -88,7 +73,6 @@ export async function askQuestionStream(
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
 
-  // Trả về true khi gặp [DONE]
   const handleEvent = (block: string): boolean => {
     const data = block
       .split('\n')
@@ -105,7 +89,8 @@ export async function askQuestionStream(
       console.warn('[SSE] Lỗi parse JSON:', data, e)
       return false
     }
-    if (payload.event === 'sources') onSources?.(mapSources(payload.sources || []), payload.in_scope)
+    if (payload.event === 'transcription') onTranscription?.(payload.text)
+    else if (payload.event === 'sources') onSources?.(mapSources(payload.sources || []), payload.in_scope)
     else if (payload.event === 'delta') onDelta?.(payload.text)
     else if (payload.event === 'error') throw new Error(payload.detail || 'Lỗi khi sinh câu trả lời')
     return false
@@ -131,45 +116,121 @@ export async function askQuestionStream(
   }
 }
 
-// export interface AskApiResponse {
-//   answer: string
-//   sources: SourceCitation[]
-// }
+/**
+ * Gọi POST /ask/stream và đọc SSE: `sources` một lần, `delta` nhiều lần, kết thúc bằng `[DONE]`.
+ */
+export async function askQuestionStream(
+  question: string,
+  callbacks: StreamCallbacks,
+  options: AskOptions = {}
+): Promise<void> {
+  const { onSources, onDelta } = callbacks
+  const { signal, ...params } = options
+  const url = buildAiUrl('/ask/stream')
 
-// interface RawAskResponse {
-//   answer: string
-//   sources: Array<{ source: string; text: string; score: number }>
-// }
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({ question, ...params }),
+      signal,
+    })
+  } catch (err: unknown) {
+    if (signal?.aborted) throw err
+    console.warn(`[ChatHSU SSE] Không thể kết nối tới ${url}:`, err)
+    onSources?.(rawData.sources as SourceCitation[], true)
+    onDelta?.(
+      `Mình đã nhận được câu hỏi: "${question}".\n\n(Lưu ý: Chưa thể kết nối tới Backend tại ${url}. Hãy kiểm tra dịch vụ ai-service / api-gateway).`
+    )
+    return
+  }
 
-// export async function askQuestion(question: string, top_k?: number): Promise<AskApiResponse> {
-//   try {
-//     const res = await fetch(`${API_BASE_URL}/ask`, {
-//       method: 'POST',
-//       headers: { 'Content-Type': 'application/json' },
-//       body: JSON.stringify({ question, ...(top_k !== undefined ? { top_k } : {}) }),
-//     })
-//
-//     if (!res.ok) throw new Error(`Lỗi máy chủ (${res.status})`)
-//
-//     const json: RawAskResponse = await res.json()
-//
-//     return {
-//       answer: json.answer,
-//       sources: (json.sources || []).map((s, index) => ({
-//         id: `src-${Date.now()}-${index}`,
-//         type: 'document',
-//         title: s.source,
-//         description: `Độ tương đồng: ${(s.score * 100).toFixed(1)}%`,
-//         text: s.text,
-//         score: s.score,
-//         fileType: s.source.split('.').pop()?.toUpperCase() || 'DOC',
-//       })),
-//     }
-//   } catch (err: unknown) {
-//     console.warn(`[ChatHSU] Fallback mô phỏng (${API_BASE_URL}):`, err)
-//     return {
-//       answer: `Mình đã nhận được câu hỏi: "${question}".\n\n(Lưu ý: Chưa thể kết nối tới FastAPI Backend tại ${API_BASE_URL}. Hãy chạy: \`uvicorn api:app --reload --port 8000\` để nhận phản hồi từ mô hình RAG).`,
-//       sources: rawData.sources as SourceCitation[],
-//     }
-//   }
-// }
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}))
+    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
+    throw new Error(detail || `Lỗi máy chủ (${res.status})`)
+  }
+
+  await consumeSseResponse(res, callbacks)
+}
+
+/**
+ * Luồng 1: Upload file âm thanh -> Gọi thẳng POST /ask/voice/stream
+ * Server nhận file âm thanh, tách chữ (STT) và gọi trực tiếp tới luồng RAG stream rồi trả về SSE.
+ */
+export async function askVoiceStream(
+  audioFile: File | Blob,
+  callbacks: StreamCallbacks,
+  options: AskOptions = {}
+): Promise<void> {
+  const { signal, top_k, mode, kho, reference_date } = options
+  const url = buildAiUrl('/ask/voice/stream')
+
+  const formData = new FormData()
+  const filename = audioFile instanceof File ? audioFile.name : 'voice_message.wav'
+  formData.append('file', audioFile, filename)
+  if (top_k !== undefined) formData.append('top_k', String(top_k))
+  if (mode) formData.append('mode', mode)
+  if (kho) formData.append('kho', kho)
+  if (reference_date) formData.append('reference_date', reference_date)
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Accept: 'text/event-stream' },
+    body: formData,
+    signal,
+  })
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}))
+    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
+    throw new Error(detail || `Lỗi xử lý giọng nói (${res.status})`)
+  }
+
+  await consumeSseResponse(res, callbacks)
+}
+
+/**
+ * Luồng 2: Gửi đoạn ghi âm từ nút Mic lên POST /stt để lấy văn bản hiển thị lên ô Input.
+ */
+export async function transcribeAudio(audio: Blob | File, filename = 'recording.webm'): Promise<SttResponse> {
+  const url = buildAiUrl('/stt')
+  const formData = new FormData()
+  const name = audio instanceof File ? audio.name : filename
+  formData.append('file', audio, name)
+
+  const res = await fetch(url, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}))
+    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
+    throw new Error(detail || `Lỗi nhận diện giọng nói (${res.status})`)
+  }
+
+  return res.json()
+}
+
+/**
+ * Luồng 3: Đọc nội dung câu trả lời của AI qua POST /tts (trả về MP3 Blob).
+ */
+export async function synthesizeSpeech(text: string, signal?: AbortSignal): Promise<Blob> {
+  const url = buildAiUrl('/tts')
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+    signal,
+  })
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}))
+    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
+    throw new Error(detail || `Lỗi tổng hợp giọng nói (${res.status})`)
+  }
+
+  return res.blob()
+}

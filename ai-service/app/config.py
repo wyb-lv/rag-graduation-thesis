@@ -108,14 +108,18 @@ GROQ_CACHE_DIR = os.environ.get("GROQ_CACHE_DIR", os.path.join(BASE_DIR, ".groq_
 # ---- Voice (STT & TTS) ----
 # Model nhận dạng giọng nói trên Groq Cloud (hỗ trợ tiếng Việt rất tốt)
 GROQ_STT_MODEL = os.environ.get("GROQ_STT_MODEL", "whisper-large-v3")
+STT_MODEL = os.environ.get("STT_MODEL", GROQ_STT_MODEL)
+STT_LANGUAGE = os.environ.get("STT_LANGUAGE", "vi")
 # Kích thước mỗi cửa sổ phân tích năng lượng âm thanh (20ms là chuẩn DSP cho tiếng nói)
 VAD_FRAME_MS = int(os.environ.get("VAD_FRAME_MS", "20"))
 # Ngưỡng năng lượng RMS tối thiểu: Khung âm thanh có năng lượng >= 0.01 được coi là có tiếng người
 VAD_ENERGY_THRESHOLD = float(os.environ.get("VAD_ENERGY_THRESHOLD", "0.01"))
+STT_VAD_ENERGY_THRESHOLD_DB = float(os.environ.get("STT_VAD_ENERGY_THRESHOLD_DB", "-38.0"))
 # Thời lượng tiếng nói tối thiểu hợp lệ (250ms). Tiếng click chuột, tiếng thở ngắn < 250ms sẽ bị loại bỏ
 VAD_MIN_SPEECH_MS = int(os.environ.get("VAD_MIN_SPEECH_MS", "250"))
 # Giọng đọc Neural mặc định cho tiếng Việt (Hoài My - Nữ miền Bắc, truyền cảm và rõ chữ)
 TTS_VOICE = os.environ.get("TTS_VOICE", "vi-VN-HoaiMyNeural")
+TTS_RATE = os.environ.get("TTS_RATE", "+0%")
 
 # Giới hạn dung lượng file âm thanh tối đa (5MB ~ 2.5 phút WAV 16kHz) để chống tràn RAM/OOM
 MAX_AUDIO_BYTES = int(os.environ.get("MAX_AUDIO_BYTES", str(5 * 1024 * 1024)))

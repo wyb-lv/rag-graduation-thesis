@@ -5,17 +5,17 @@ import { ChatArea } from '@/components/chat/ChatArea'
 import { ChatInput } from '@/components/chat/ChatInput'
 
 function ChatView() {
-  const { messages, isLoading, sendMessage } = useChat()
+  const { messages, isLoading, sendMessage, sendVoiceMessage } = useChat()
 
   return (
     <AppLayout>
       {messages.length === 0 ? (
-        <GreetingView onSend={sendMessage} disabled={isLoading} />
+        <GreetingView onSend={sendMessage} onSendVoice={sendVoiceMessage} disabled={isLoading} />
       ) : (
         <>
           <ChatArea messages={messages} isLoading={isLoading} />
           <footer className="w-full pb-3 pt-1 px-4 flex flex-col items-center flex-shrink-0">
-            <ChatInput onSend={sendMessage} position="bottom" disabled={isLoading} />
+            <ChatInput onSend={sendMessage} onSendVoice={sendVoiceMessage} position="bottom" disabled={isLoading} />
           </footer>
         </>
       )}

@@ -45,8 +45,11 @@ HELP.md
 .DS_Store
 Thumbs.db
 
-# ── Tài liệu & Markdown ──
+# ── Tài liệu & Markdown / Notebook thực nghiệm ──
 *.md
+*.ipynb
+indexing_vector.ipynb
+speech_benchmark.ipynb
 
 # ── Công cụ AI cục bộ ──
 .claude/

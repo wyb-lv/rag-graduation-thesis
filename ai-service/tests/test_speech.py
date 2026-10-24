@@ -1,121 +1,69 @@
 import io
+import math
+import struct
 import wave
-import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch
 
-from app import speech
-
-
-# ── 1. Test Sửa lỗi đồng âm tiếng Việt (Phonetic Fix) ────────────────────────
-def test_phonetic_fix_admission_codes():
-    assert speech.apply_phonetic_fix("xét tuyển tổ hợp a không không") == "xét tuyển A00"
-    assert speech.apply_phonetic_fix("tổ hợp a không một") == "A01"
-    assert speech.apply_phonetic_fix("tổ hợp b không không") == "B00"
-    assert speech.apply_phonetic_fix("tổ hợp d không một") == "D01"
-    assert speech.apply_phonetic_fix("tổ hợp c không không") == "C00"
+from app import speech, config
 
 
-def test_phonetic_fix_academic_terms():
-    assert speech.apply_phonetic_fix("điểm gờ pê a") == "điểm GPA"
-    assert speech.apply_phonetic_fix("chứng chỉ ai eo") == "chứng chỉ IELTS"
-    assert speech.apply_phonetic_fix("chứng chỉ tô ích") == "chứng chỉ TOEIC"
-    assert speech.apply_phonetic_fix("bị điểm ép") == "bị điểm F"
-    assert speech.apply_phonetic_fix("trường đại học hoa xem") == "trường Hoa Sen"
-
-
-def test_phonetic_fix_disabled():
-    raw = "tổ hợp a không một"
-    assert speech.apply_phonetic_fix(raw, enable_phonetic_fix=False) == raw
-
-
-# ── 2. Test Chuẩn hóa văn bản đọc (Text Normalization) ────────────────────────
-def test_normalize_academic_text():
-    # Điểm thập phân
-    assert "G P A 3 chấm 50" in speech.normalize_academic_text("GPA 3.50")
-    # Phân số tín chỉ
-    assert "15 trên 30 tín chỉ" in speech.normalize_academic_text("15/30 tín chỉ")
-    # Viết tắt học vụ
-    assert "Trung học phổ thông" in speech.normalize_academic_text("kỳ thi THPT")
-    # Nhãn trích dẫn tài liệu bị loại bỏ
-    norm = speech.normalize_academic_text("Xem chi tiết [quy_che.pdf:12].")
-    assert "[quy_che.pdf:12]" not in norm
-    assert "Xem chi tiết" in norm
-
-
-# ── 3. Test Tách câu cho TTS Prefetching ──────────────────────────────────────
-def test_split_into_sentences():
-    text = "Câu thứ nhất! Câu thứ hai? Câu thứ ba. Và câu cuối cùng."
-    sentences = speech.split_into_sentences(text)
-    assert len(sentences) == 4
-    assert sentences[0] == "Câu thứ nhất!"
-    assert sentences[1] == "Câu thứ hai?"
-    assert sentences[2] == "Câu thứ ba."
-    assert sentences[3] == "Và câu cuối cùng."
-
-
-# ── 4. Test Thuật toán VAD (Voice Activity Detection) ─────────────────────────
-def _create_wav(duration_sec: float, is_silence: bool = False, sample_rate: int = 16000) -> bytes:
-    n_samples = int(duration_sec * sample_rate)
-    if is_silence:
-        samples = np.zeros(n_samples, dtype=np.int16)
-    else:
-        t = np.linspace(0, duration_sec, n_samples, endpoint=False)
-        samples = (np.sin(2 * np.pi * 440 * t) * 15000).astype(np.int16)
-
+def make_wav_bytes(freq: float = 440.0, duration_s: float = 0.5, amplitude: int = 12000) -> bytes:
+    """Tạo dữ liệu WAV PCM 16-bit mono phục vụ kiểm thử."""
+    sample_rate = 16000
+    n_samples = int(sample_rate * duration_s)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
-        wf.writeframes(samples.tobytes())
+        frames = bytearray()
+        for i in range(n_samples):
+            val = int(amplitude * math.sin(2.0 * math.pi * freq * i / sample_rate))
+            frames.extend(struct.pack("<h", val))
+        wf.writeframes(bytes(frames))
     return buf.getvalue()
 
 
-def test_vad_active_speech():
-    active_wav = _create_wav(1.5, is_silence=False)
-    processed, is_speech, trimmed_ms = speech.preprocess_audio_vad(active_wav)
-    assert is_speech is True
-    assert len(processed) > 0
+def test_apply_phonetic_fix_replaces_academic_homophones():
+    raw = "Cho em hỏi quy chế tính chỉ và điều kiện xét học bỗng tại hắt ét u"
+    fixed = speech.apply_phonetic_fix(raw)
+    assert "tín chỉ" in fixed
+    assert "học bổng" in fixed
+    assert "HSU" in fixed
 
 
-def test_vad_silence_detection():
-    silent_wav = _create_wav(1.5, is_silence=True)
-    processed, is_speech, trimmed_ms = speech.preprocess_audio_vad(silent_wav)
-    assert is_speech is False
-    assert len(processed) == 0
-    assert trimmed_ms >= 1400.0
+def test_normalize_academic_text_expands_abbreviations_and_symbols():
+    raw = "Theo QĐ-ĐHHS năm 2024-2025, SV ngành CNTT cần ĐTBCTL >= 2.5/4.0 và đạt >= 50% số TC."
+    normalized = speech.normalize_academic_text(raw)
+    assert "Quyết định Đại học Hoa Sen" in normalized
+    assert "2024 đến 2025" in normalized
+    assert "sinh viên" in normalized
+    assert "Công nghệ thông tin" in normalized
+    assert "điểm trung bình chung tích lũy" in normalized
+    assert "lớn hơn hoặc bằng 2.5 chấm" not in normalized
+    assert "2 chấm 5 trên 4 chấm 0" in normalized
+    assert "50 phần trăm" in normalized
+    assert "tín chỉ" in normalized
 
 
-def test_vad_non_wav_bypass():
-    mp3_fake = b"ID3\x03\x00\x00\x00fake_mp3_content"
-    processed, is_speech, trimmed_ms = speech.preprocess_audio_vad(mp3_fake)
-    assert processed == mp3_fake
-    assert is_speech is True
-    assert trimmed_ms == 0.0
+def test_preprocess_audio_vad_detects_silence_and_voiced_audio():
+    silent_wav = make_wav_bytes(amplitude=0)
+    _, is_speech_silent = speech.preprocess_audio_vad(silent_wav)
+    assert is_speech_silent is False
+
+    voiced_wav = make_wav_bytes(amplitude=14000)
+    processed_bytes, is_speech_voiced = speech.preprocess_audio_vad(voiced_wav)
+    assert is_speech_voiced is True
+    assert len(processed_bytes) > 44
 
 
-# ── 5. Test Pipeline Transcribe Speech với Mock Groq ──────────────────────────
-def test_transcribe_speech_silence_short_circuit():
-    silent_wav = _create_wav(1.0, is_silence=True)
-    result = speech.transcribe_speech(silent_wav, "silent.wav")
-    assert result["is_speech"] is False
-    assert result["raw_text"] == ""
-    assert result["corrected_text"] == ""
+def test_validate_audio_bytes_rejects_empty_oversize_and_invalid_magic():
+    with pytest.raises(ValueError):
+        speech.validate_audio_bytes(b"", filename="empty.wav")
 
+    oversized = b"RIFF" + b"\x00" * 4 + b"WAVE" + b"\x00" * (config.MAX_AUDIO_BYTES + 10)
+    with pytest.raises(speech.AudioTooLargeError):
+        speech.validate_audio_bytes(oversized, filename="huge.wav")
 
-@patch("app.groq_client.get_client")
-def test_transcribe_speech_with_mock_client(mock_get_client):
-    mock_client = MagicMock()
-    mock_transcription = MagicMock()
-    mock_transcription.text = "Em muốn thi tổ hợp a không một"
-    mock_client.audio.transcriptions.create.return_value = mock_transcription
-    mock_get_client.return_value = mock_client
-
-    active_wav = _create_wav(1.0, is_silence=False)
-    result = speech.transcribe_speech(active_wav, "active.wav", enable_phonetic_fix=True)
-
-    assert result["is_speech"] is True
-    assert result["raw_text"] == "Em muốn thi tổ hợp a không một"
-    assert result["corrected_text"] == "Em muốn thi A01"
-    assert "latency_ms" in result
+    with pytest.raises(speech.UnsupportedAudioFormatError):
+        speech.validate_audio_bytes(b"%PDF-1.7 fake document content", filename="fake.wav")

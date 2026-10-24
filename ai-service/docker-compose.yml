@@ -1,3 +1,5 @@
+name: rag-graduation-thesis
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.19.1
@@ -24,14 +26,15 @@ services:
     volumes:
       - hf_cache:/data/hf             # BGE-M3 + jina reranker (~3GB), tai lan dau co request /ask
       - groq_cache:/data/groq_cache
-    # Can NVIDIA GPU + Docker Desktop (WSL2). May khong co GPU: xoa khoi `deploy` va build ban CPU (xem Dockerfile).
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      - ./app:/app/app                # Mount code app trực tiếp để đồng bộ code mới nhất
+    # Can NVIDIA GPU + Docker Desktop (WSL2). May khong co GPU (vd macOS): comment khoi `deploy` va build ban CPU (xem Dockerfile).
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
 volumes:
   qdrant_storage:
