@@ -1,8 +1,10 @@
 package com.hsu.gateway.config;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -21,8 +23,13 @@ public class CorsConfig {
     @Value("${gateway.cors.allowed-origins:http://localhost:3000,http://localhost:5173,http://localhost:5174}")
     private String allowedOriginsStr;
 
+    /**
+     * Phải chạy trước RateLimitFilter / JwtAuthFilter: hai filter này tự trả 429 / 401 mà không gọi tiếp chuỗi filter,
+     * nên nếu CORS đứng sau thì response lỗi không có Access-Control-Allow-Origin, trình duyệt chặn và FE chỉ thấy
+     * "Failed to fetch" (không refresh token, không đăng xuất được).
+     */
     @Bean
-    public CorsFilter corsFilter() {
+    public FilterRegistrationBean<CorsFilter> corsFilter() {
         CorsConfiguration config = new CorsConfiguration();
         List<String> origins = Arrays.asList(allowedOriginsStr.split(","));
         config.setAllowedOrigins(origins.stream().map(String::trim).toList());
@@ -34,6 +41,8 @@ public class CorsConfig {
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
-        return new CorsFilter(source);
+        FilterRegistrationBean<CorsFilter> registration = new FilterRegistrationBean<>(new CorsFilter(source));
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        return registration;
     }
 }

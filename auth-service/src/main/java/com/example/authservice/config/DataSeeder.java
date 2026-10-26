@@ -26,7 +26,9 @@ public class DataSeeder implements CommandLineRunner {
             new Seed("admin", "admin@hsu.edu.vn", "Admin@123", 1, UserRole.ADMIN),
             new Seed("manager", "manager@hsu.edu.vn", "Manager@123", 1, UserRole.MANAGER),
             new Seed("employee1", "employee1@hsu.edu.vn", "Employee@123", 1, UserRole.EMPLOYEE),
-            new Seed("employee2", "employee2@hsu.edu.vn", "Employee@123", 2, UserRole.EMPLOYEE)
+            new Seed("employee2", "employee2@hsu.edu.vn", "Employee@123", 2, UserRole.EMPLOYEE),
+            // Tài khoản của nút "Đăng nhập nhanh" trên FE (AuthScreen)
+            new Seed("demo_hsu", "demo@hsu.edu.vn", "Password@123", 1, UserRole.EMPLOYEE)
     );
 
     private final UserRepository userRepository;

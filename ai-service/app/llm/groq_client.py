@@ -139,14 +139,17 @@ def _params(model, messages):
     return params
 
 
-def _retry_error(last_error):
+def _retry_error(last_error, retries=None):
+    retries = cfg.GROQ_MAX_RETRIES if retries is None else retries
     kind = "429 (vuot gioi han toc do)" if isinstance(last_error, groq.RateLimitError) else "timeout/mat ket noi"
-    return GroqError(f"Groq loi {kind} sau {cfg.GROQ_MAX_RETRIES + 1} lan thu, hay thu lai sau: {last_error}")
+    return GroqError(f"Groq loi {kind} sau {retries + 1} lan thu, hay thu lai sau: {last_error}")
 
 
-def chat(messages, client=None, limiter=None, sleep=time.sleep):
-    """Gui `messages` toi model Qwen (GROQ_QWEN_MODEL), tra ve noi dung tra loi. Co cache dia + retry."""
+def chat(messages, client=None, limiter=None, sleep=time.sleep, retries=None):
+    """Gui `messages` toi model Qwen (GROQ_QWEN_MODEL), tra ve noi dung tra loi. Co cache dia + retry.
+    `retries` (mac dinh GROQ_MAX_RETRIES): so lan thu lai; buoc phu nhu viet lai cau hoi dat 0 de loi thi bo qua ngay, khong cho backoff."""
     model = _check_config(client)
+    retries = cfg.GROQ_MAX_RETRIES if retries is None else retries
 
     key = cache_key(model, messages)
     if cfg.GROQ_CACHE_ENABLED:
@@ -160,7 +163,7 @@ def chat(messages, client=None, limiter=None, sleep=time.sleep):
 
     estimate = estimate_tokens(messages, cfg.GROQ_MAX_TOKENS)
     last_error = None
-    for attempt in range(cfg.GROQ_MAX_RETRIES + 1):
+    for attempt in range(retries + 1):
         entry = limiter.acquire(estimate)
         backoff = min(cfg.GROQ_BACKOFF_MAX, cfg.GROQ_BACKOFF_BASE * 2 ** attempt) + random.uniform(0, 1)
         try:
@@ -177,10 +180,10 @@ def chat(messages, client=None, limiter=None, sleep=time.sleep):
             if cfg.GROQ_CACHE_ENABLED and text:
                 _cache_put(key, model, text)
             return text
-        if attempt < cfg.GROQ_MAX_RETRIES:
+        if attempt < retries:
             sleep(delay)
 
-    raise _retry_error(last_error) from last_error
+    raise _retry_error(last_error, retries) from last_error
 
 
 class ThinkFilter:

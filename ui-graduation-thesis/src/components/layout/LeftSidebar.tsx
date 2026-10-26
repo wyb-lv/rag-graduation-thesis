@@ -1,10 +1,19 @@
-import { SidebarLeftIcon, SearchIcon, PencilIcon, MoreDotsIcon } from '@/components/icons'
+import { SidebarLeftIcon, SearchIcon, PencilIcon } from '@/components/icons'
 import { ChatHistoryList } from '@/components/sidebar/ChatHistoryList'
 import { UserProfile } from '@/components/sidebar/UserProfile'
 import { useChat } from '@/context/ChatContext'
 
 export function LeftSidebar() {
-  const { user, conversations, activeId, toggleLeftSidebar, startNewChat, selectConversation } = useChat()
+  const {
+    user,
+    conversations,
+    activeId,
+    toggleLeftSidebar,
+    startNewChat,
+    selectConversation,
+    activeView,
+    setActiveView,
+  } = useChat()
 
   return (
     <aside className="w-[260px] h-full flex flex-col justify-between bg-black text-[#ECECEC] z-20 flex-shrink-0 select-none border-r border-white/5">
@@ -37,9 +46,16 @@ export function LeftSidebar() {
         <div className="space-y-1 mb-5 text-[14px]">
           {/* Hàng 2: Đoạn chat mới - pl-2 (8px) + container 8px = đúng 16px (Tâm X = 26px) */}
           <button
-            className="w-full h-9 flex items-center gap-3 pl-2 pr-3 rounded-lg text-white hover:bg-[#212121] transition-colors text-left font-normal"
+            className={`w-full h-9 flex items-center gap-3 pl-2 pr-3 rounded-lg transition-colors text-left font-normal ${
+              activeView === 'chat'
+                ? 'bg-[#212121] text-white'
+                : 'text-white/80 hover:bg-[#212121] hover:text-white'
+            }`}
             type="button"
-            onClick={startNewChat}
+            onClick={() => {
+              setActiveView('chat')
+              startNewChat()
+            }}
           >
             <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
               <PencilIcon className="w-5 h-5 text-white/90" />
@@ -47,15 +63,22 @@ export function LeftSidebar() {
             <span className="truncate">Đoạn chat mới</span>
           </button>
 
-          {/* Hàng 3: Thêm - pl-2 (8px) + container 8px = đúng 16px (Tâm X = 26px) */}
+          {/* Hàng 3: Tải tài liệu & OCR */}
           <button
-            className="w-full h-9 flex items-center gap-3 pl-2 pr-3 rounded-lg text-white hover:bg-[#212121] transition-colors text-left font-normal"
+            className={`w-full h-9 flex items-center gap-3 pl-2 pr-3 rounded-lg transition-colors text-left font-normal ${
+              activeView === 'ocr'
+                ? 'bg-[#252525] text-[#55b9ff] font-medium'
+                : 'text-white/80 hover:bg-[#212121] hover:text-white'
+            }`}
             type="button"
+            onClick={() => setActiveView('ocr')}
           >
             <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-              <MoreDotsIcon className="w-5 h-5 text-white/90" />
+              <svg className="w-5 h-5 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
             </div>
-            <span className="truncate">Thêm</span>
+            <span className="truncate">Tải tài liệu & OCR</span>
           </button>
         </div>
 

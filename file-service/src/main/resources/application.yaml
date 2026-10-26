@@ -68,7 +68,11 @@ minio:
 ocr:
   # Thư mục chứa <lang>.traineddata. Trong container: OCR_TESSDATA_PATH=/usr/share/tesseract-ocr/5/tessdata
   tessdata-path: ./tessdata
-  language: vie+eng
+  language: vie
+  # onnx = PaddleOCR (phát hiện vùng chữ) + VietOCR (đọc chữ), chính xác hơn Tesseract, nhất là bảng; tesseract = như cũ.
+  # Không nạp được model trong models-path thì tự dùng Tesseract
+  engine: ${OCR_ENGINE:onnx}
+  models-path: ${OCR_MODELS_PATH:./models}
   # Độ phân giải render trang PDF scan trước khi OCR
   dpi: 300
   # Trang PDF có ít hơn số ký tự này (không tính khoảng trắng) được coi là trang scan và sẽ OCR

@@ -1,7 +1,8 @@
 """Cau hinh tap trung cho pipeline RAG hybrid (BGE-M3 dense+sparse -> Qdrant RRF -> reranker -> Groq Qwen).
 
-Chi bon bien doc tu moi truong (file .env, `environment` cua docker-compose, ENV cua Dockerfile):
-GROQ_API_KEY, GROQ_QWEN_MODEL, QDRANT_URL, GROQ_CACHE_DIR. Moi gia tri khac la hang so, sua truc tiep o day
+Bon bien doc tu moi truong (file .env, `environment` cua docker-compose, ENV cua Dockerfile):
+GROQ_API_KEY, GROQ_QWEN_MODEL, QDRANT_URL, GROQ_CACHE_DIR; cong them cac bien ROUTER_* / SESSION_* / GEMINI_API_KEY o
+cuoi file (router LLM va session, deu tat mac dinh). Moi gia tri khac la hang so, sua truc tiep o day
 (container phai build lai: `docker-compose up -d --build ai-service`).
 """
 import os
@@ -10,6 +11,19 @@ from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+
+
+def _env(name, default, cast=str):
+    raw = os.environ.get(name, "").strip()
+    return cast(raw) if raw else default
+
+
+def _flag(raw):
+    if raw.lower() in ("1", "true", "yes", "on"):
+        return True
+    if raw.lower() in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"gia tri bool khong hop le: '{raw}' (dung true/false)")
 
 
 # ---- Du lieu nguon (do export_model.py tao ra) ----
@@ -48,7 +62,6 @@ QDRANT_COLLECTION = "quy_dinh_hybrid"
 QDRANT_LEGACY_COLLECTION = "paragraphs"
 DENSE_VECTOR_NAME = "dense"
 SPARSE_VECTOR_NAME = "sparse"
-BM25_VECTOR_NAME = "bm25"
 EMBED_DIM = 1024
 # Chi dung khi khong doc duoc collection cu: cung cau hinh da benchmark truoc day.
 HNSW_M = 32
@@ -79,32 +92,27 @@ RAG_MODES = ("dense", "hybrid", "hybrid_rerank")
 
 
 # Ten nhanh -> ten vector trong collection Qdrant
-HYBRID_LEG_VECTORS = {"dense": DENSE_VECTOR_NAME, "sparse": SPARSE_VECTOR_NAME, "bm25": BM25_VECTOR_NAME}
+HYBRID_LEG_VECTORS = {"dense": DENSE_VECTOR_NAME, "sparse": SPARSE_VECTOR_NAME}
 HYBRID_LEG_NAMES = tuple(HYBRID_LEG_VECTORS)
 
-# Cac nhanh prefetch cua mode `hybrid` / `hybrid_rerank`, hop nhat bang RRF phia Qdrant. Mode `dense` luon chi dung dense.
-# Mac dinh dense,sparse (nhu truoc khi co BM25). Them "bm25" can collection co vector bm25: chay scripts/migrate_add_bm25.py.
+# Cac nhanh cua mode `hybrid` / `hybrid_rerank`: moi nhanh cua moi cau (cau goc va cau viet lai) la mot danh sach, tat ca duoc hop
+# nhat bang MOT lan RRF phia Qdrant (gop trung theo id). Mode `dense` luon chi dung dense.
 HYBRID_LEGS = ("dense", "sparse")
 
-# ---- BM25 (nhanh lexical, xem bm25.py). Doi tokenizer/K1/B/AVG_LEN thi phai nap lai (reindex) bm25 cua collection ----
-BM25_TOKENIZERS = ("syllable", "syllable_bigram", "pyvi")
-BM25_TOKENIZER = "syllable_bigram"
-BM25_K1 = 1.2
-BM25_B = 0.75
-# So token BM25 trung binh moi chunk. 120 chi la gia tri tam: scripts/migrate_add_bm25.py do gia tri that tren du lieu
-# va in ra de dat vao day (trong so cua chunk luu o Qdrant da gom do dai chunk / gia tri nay).
-BM25_AVG_LEN = 120.0
 # Chi mode `dense`: cosine toi thieu de coi cau hoi la co trong tai lieu (do tren bge-m3 + quy_che.pdf:
 # cau trong pham vi >= 0.5, cau ngoai pham vi <= 0.56). Diem RRF khong phai cosine nen khong dung nguong nay.
 SCORE_THRESHOLD = 0.5
-# Mode hybrid_rerank: diem rerank (cosine cua jina, -1..1) toi thieu de doan van duoc coi la lien quan. Do tren
-# quy_che.pdf (22 cau): doan dung o cau trong pham vi >= 0.268, cau lac de <= 0.075, cau "gan chu de" nhung khong co
-# dap an 0.17-0.23 (van toi LLM, prompt se tu choi). Dat -1 de tat. Doi model/corpus thi do lai.
-RERANK_MIN_SCORE = 0.1
+# Mode hybrid_rerank: diem rerank (cosine cua jina, -1..1) toi thieu de doan van duoc coi la lien quan. Dat -1 de tat.
+# Do lai 2026-10 tren kho 1297 chunk / 77 van ban (10 cau trong pham vi, 9 cau lac de): cau hoi NGAN ("Hoc phi bao nhieu?")
+# bi reranker nen diem xuong, doan dung chi 0.01-0.06 nen nguong 0.1 cat con 0-1 doan va LLM tra "khong chua thong tin";
+# them ten truong vao cau hoi chi la doc them chu (diem len, nhung xep hang lai ve doan chung chung, va cau lac de cung vuot
+# nguong) nen KHONG la cach sua. Cau lac de cao nhat -0.032, doan tot nhat cua cau trong pham vi >= 0.2 -> 0.0 giu du doan
+# ma van chan cau lac de. Doi model/corpus thi do lai (scripts/calibrate_rerank.py).
+RERANK_MIN_SCORE = 0.0
 
-# ---- Guard (guard.py, small_talk.py): chong prompt injection + tra loi co dinh cho chao hoi / hoi ve tro ly ----
-GUARD_ENABLED = True  # False: hanh vi y het truoc khi co guard
-GUARD_MODE = "enforce"  # "log_only": chi ghi log, khong chan/loai/sua gi
+# ---- Guard (guard.py): quet doan trich, prompt co rao + canary, guard dau ra; cau tra loi co dinh (small_talk.py) cho router ----
+GUARD_ENABLED = True  # False: tat quet doan trich, prompt co rao, guard dau ra va chuan hoa cau hoi
+GUARD_MODE = "enforce"  # "log_only": chi ghi log, khong loai doan / chan dau ra
 if GUARD_MODE not in ("enforce", "log_only"):  # guard so sanh == "enforce" khap noi: go sai se am tham het chan
     raise ValueError(f"GUARD_MODE phai la 'enforce' hoac 'log_only', nhan duoc '{GUARD_MODE}'")
 GUARD_MAX_QUESTION_CHARS = 1000
@@ -132,6 +140,64 @@ GUARD_REPLY_META = (
 GUARD_REPLY_THANKS = "Không có gì! Bạn cần tra cứu thêm quy định nào cứ hỏi nhé."
 GUARD_REPLY_GOODBYE = "Tạm biệt! Khi cần tra cứu quy định, bạn cứ quay lại nhé."
 
+OFF_TOPIC_ANSWER = (
+    "Tôi chỉ hỗ trợ tra cứu quy chế, quy định, thông báo, biểu mẫu và hướng dẫn của Trường Đại học Hoa Sen. "
+    "Bạn vui lòng đặt lại câu hỏi theo một chủ đề quy định của trường nhé."
+)
+CLARIFY_ANSWER_TOPIC = "Bạn muốn hỏi về quy định hoặc chủ đề nào của trường (ví dụ học bổng, học phí, đăng ký học phần)?"
+CLARIFY_ANSWER_AUDIENCE = "Bạn là sinh viên khóa nào hoặc thuộc chương trình đào tạo nào để tôi tra cứu đúng quy định áp dụng?"
+CLARIFY_ANSWER_TIME = "Bạn muốn hỏi cho học kỳ hoặc năm học nào?"
+
+# ---- Router LLM (router_llm.py): Gemini (REST generateContent) tu suy luan chao hoi / tan cong / ngoai pham vi / hoi lai / RAG, khong con
+# luat tu khoa nao. Tat hoac loi thi cau hoi di thang vao RAG. Tat mac dinh ----
+ROUTER_ENABLED = _flag(os.environ.get("ROUTER_ENABLED") or "false")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")  # gui o header x-goog-api-key; khong bao gio log
+# Id model Gemini, vi du gemini-3.5-flash-lite (ban stable, nhanh nhat cua 3.5; khong dung ban *-preview).
+# Tien to `gemini/` kieu cu (thoi LiteLLM) van duoc chap nhan va bi bo.
+ROUTER_MODEL = (os.environ.get("GEMINI_MODEL") or "").removeprefix("gemini/")
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent"  # {} = ROUTER_MODEL
+# Do 2026-10 voi gemini-3.5-flash-lite: p50 ~2.4s, p95 ~8.8s moi lan goi, nen 10s. Xau nhat truoc khi roi vao RAG: (1 + ROUTER_MAX_RETRIES) x nay.
+ROUTER_TIMEOUT_S = _env("ROUTER_TIMEOUT_S", 10.0, float)
+ROUTER_MAX_RETRIES = _env("ROUTER_MAX_RETRIES", 1, int)
+# Gioi han cua tien trinh nay (khong phai cua Google). 15 RPM la con so cu LiteLLM ghi cho gemini-3.5-flash-lite; Google khong cong bo
+# free tier tren trang rate-limits ("xem trong AI Studio"), nen doi theo gia tri hien trong AI Studio cua project.
+ROUTER_RPM = _env("ROUTER_RPM", 15, int)
+ROUTER_MIN_CONFIDENCE = _env("ROUTER_MIN_CONFIDENCE", 0.5, float)  # y dinh co dinh duoi muc nay -> rag
+ROUTER_BLOCK_CONFIDENCE = _env("ROUTER_BLOCK_CONFIDENCE", 0.7, float)  # injection tu muc nay tro len -> tu choi
+ROUTER_OFFTOPIC_CONFIDENCE = _env("ROUTER_OFFTOPIC_CONFIDENCE", 0.8, float)
+ROUTER_CLARIFY_CONFIDENCE = _env("ROUTER_CLARIFY_CONFIDENCE", 0.7, float)
+ROUTER_CLARIFY_ENABLED = _flag(os.environ.get("ROUTER_CLARIFY_ENABLED") or "true")  # false: clarify luon thanh rag (do ablation)
+ROUTER_HISTORY_TURNS = _env("ROUTER_HISTORY_TURNS", 3, int)
+ROUTER_MAX_TOKENS = 512  # JSON that ~100 token; 512 chua cho token "suy nghi" (tinh vao max_output_tokens)
+# Do 2026-10 voi gemini-3.5-flash-lite + structured output: "none" (= thinkingLevel minimal) lam standalone_query lap vo han tai
+# ~500 token, 7/8 lan JSON bi cat, ~5s; "low" cho JSON hop le ~100 token, ~2s. Chi ha xuong "none" khi doi model va do lai.
+ROUTER_REASONING_EFFORT = _env("ROUTER_REASONING_EFFORT", "low")
+ROUTER_QUERY_MAX_CHARS = 300  # standalone_query dai hon bi cat
+# Moi tin nhan lich su gui cho router bi cat con ngan nay. 1500: du thay cac muc 1, 2, 3... cua mot cau tra loi dai, de cau hoi kieu
+# "giai thich ro dieu 2" tro duoc vao muc cua cau tra loi truoc (300 chi thay duoc muc 1 nen router hieu thanh Dieu 2 cua van ban)
+ROUTER_HISTORY_MSG_CHARS = 1500
+ROUTER_CACHE_SIZE = 512
+ROUTER_CACHE_TTL_S = 3600
+
+# ---- Session (session.py): lich su hoi thoai ngan han theo session_id (LlamaIndex Memory). Tat mac dinh ----
+SESSION_ENABLED = _flag(os.environ.get("SESSION_ENABLED") or "false")
+SESSION_STORE = _env("SESSION_STORE", "memory")  # memory: SQLite trong RAM, mat khi restart | sqlite: file, can volume
+SESSION_DB_URI = _env("SESSION_DB_URI", "")  # vd sqlite+aiosqlite:////data/sessions/sessions.db (chi khi SESSION_STORE=sqlite)
+SESSION_TTL_S = _env("SESSION_TTL_S", 1800, int)
+SESSION_MAX_SESSIONS = _env("SESSION_MAX_SESSIONS", 200, int)
+SESSION_MAX_TURNS = _env("SESSION_MAX_TURNS", 6, int)
+SESSION_MAX_HISTORY_TOKENS = _env("SESSION_MAX_HISTORY_TOKENS", 1500, int)  # van nho vi Groq chi co ~8K TPM; 1500 chua du mot cau tra loi dai + cau hoi
+SESSION_CHARS_PER_TOKEN = 2.0  # dem token bao thu cho tieng Viet (co dau): it ky tu / token hon uoc luong 2.5 cua Groq
+SESSION_MESSAGE_MAX_CHARS = 1500  # moi tin nhan lich su dua vao prompt bi cat con ngan nay (cau tra loi dai khong chiem het ngan sach; xem ROUTER_HISTORY_MSG_CHARS)
+SESSION_USER_HEADER = "X-User-Id"  # gateway gan sau khi xac thuc JWT (JwtAuthFilter); co header nay thi khoa session = user:session
+
+if ROUTER_ENABLED and not ROUTER_MODEL:
+    raise ValueError("ROUTER_MODEL (bien moi truong GEMINI_MODEL) bat buoc khi ROUTER_ENABLED, vd gemini-3.5-flash-lite")
+if SESSION_STORE not in ("memory", "sqlite"):
+    raise ValueError(f"SESSION_STORE phai la 'memory' hoac 'sqlite', nhan duoc '{SESSION_STORE}'")
+if SESSION_ENABLED and SESSION_STORE == "sqlite" and not SESSION_DB_URI.startswith("sqlite+aiosqlite:"):
+    raise ValueError("SESSION_STORE=sqlite can SESSION_DB_URI dang sqlite+aiosqlite:///duong/dan/sessions.db")
+
 # ---- Groq ----
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 # Bat buoc: ID model Qwen tren Groq, vi du qwen/qwen3.8-27b (doc console.groq.com/docs/models).
@@ -150,3 +216,9 @@ GROQ_BACKOFF_BASE = 2.0  # giay; nhan doi moi lan thu lai
 GROQ_BACKOFF_MAX = 60.0
 GROQ_CACHE_ENABLED = True
 GROQ_CACHE_DIR = os.environ.get("GROQ_CACHE_DIR", os.path.join(BASE_DIR, ".groq_cache"))
+
+# ---- Viet lai cau truy van (rag/query_rewrite.py): Qwen viet lai cau tim kiem, tim dense + sparse cho CA HAI cau roi RRF mot lan tren
+# moi danh sach truoc khi rerank. Them mot lan goi Groq cho moi cau hoi RAG (chia doi ngan sach GROQ_RPM). Chi mode hybrid / hybrid_rerank.
+# Bat mac dinh; dat QUERY_REWRITE_ENABLED=false de tat (vd khi het quota Groq) ----
+QUERY_REWRITE_ENABLED = _flag(os.environ.get("QUERY_REWRITE_ENABLED") or "true")
+QUERY_REWRITE_MAX_CHARS = 300  # cau viet lai dai hon bi cat

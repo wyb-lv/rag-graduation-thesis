@@ -1,0 +1,30 @@
+[
+ {"name": "clarify_topic_then_one_word_completion", "kind": "clarify", "turns": [
+  {"q": "điều kiện là gì?", "expect": "clarify", "missing": "topic"},
+  {"q": "học bổng", "expect": "rag", "query_contains": ["học bổng"]}]},
+ {"name": "clarify_topic_then_phrase_completion", "kind": "clarify", "turns": [
+  {"q": "mức phạt thế nào?", "expect": "clarify", "missing": "topic"},
+  {"q": "nộp học phí trễ", "expect": "rag", "query_contains": ["học phí"]}]},
+ {"name": "clarify_audience_then_cohort_in_request", "kind": "clarify", "turns": [
+  {"q": "Em có được xét học bổng không?", "expect": "clarify", "missing": "audience"},
+  {"q": "em khóa 2024", "khoa": 2024, "expect": "rag", "query_contains": ["học bổng"]}]},
+ {"name": "no_second_clarification_in_a_row", "kind": "loop", "turns": [
+  {"q": "điều kiện là gì?", "expect": "clarify", "missing": "topic"},
+  {"q": "không biết nữa", "expect": "rag"}]},
+ {"name": "first_semester_follow_up", "kind": "follow_up", "turns": [
+  {"q": "Sinh viên được đăng ký tối đa bao nhiêu tín chỉ mỗi học kỳ?", "expect": "rag", "answer": "Tối đa 24 tín chỉ mỗi học kỳ chính [Quy chế đào tạo, Điều 12]."},
+  {"q": "còn học kỳ đầu tiên thì sao?", "expect": "rag", "query_contains": ["tín chỉ", "học kỳ đầu"]}]},
+ {"name": "other_major_follow_up_without_diacritics", "kind": "follow_up", "turns": [
+  {"q": "hoc phi nganh cong nghe thong tin la bao nhieu", "expect": "rag", "answer": "Học phí được quy định tại thông báo học phí của trường."},
+  {"q": "con nganh luat thi sao", "expect": "rag", "query_contains": ["học phí", "luật"]}]},
+ {"name": "scholarship_detail_follow_up", "kind": "follow_up", "turns": [
+  {"q": "Điều kiện xét học bổng Tinh hoa là gì?", "expect": "rag", "answer": "Sinh viên cần đạt điểm trung bình học kỳ tối thiểu theo quy định."},
+  {"q": "vậy còn điều kiện về điểm rèn luyện?", "expect": "rag", "query_contains": ["học bổng", "rèn luyện"]}]},
+ {"name": "documents_follow_up_without_diacritics", "kind": "follow_up", "turns": [
+  {"q": "thu tuc xin bao luu ket qua hoc tap", "expect": "rag", "answer": "Sinh viên nộp đơn tại phòng Đào tạo theo biểu mẫu quy định."},
+  {"q": "can nhung giay to gi", "expect": "rag", "query_contains": ["bảo lưu"]}]},
+ {"name": "greeting_then_real_question_then_follow_up", "kind": "follow_up", "turns": [
+  {"q": "xin chào", "expect": "greeting"},
+  {"q": "Cho em hỏi về học bổng khuyến học", "expect": "rag", "answer": "Học bổng khuyến học dành cho sinh viên có kết quả học tập tốt."},
+  {"q": "điều kiện để nhận là gì?", "expect": "rag", "query_contains": ["học bổng"]}]}
+]

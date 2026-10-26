@@ -8,6 +8,7 @@ FE goi:
                  "loai_van_ban": ["thong_bao"] }
       ->  { "answer": "...", "in_scope": true, "sources": [...] }
     Chi `question` la bat buoc. Khong tim thay quy dinh phu hop -> in_scope=false, sources=[], khong goi LLM.
+    Them tuy chon (chi khi SESSION_ENABLED): "session_id" (UUID), "reset"; response them "session_id" (xem API.md).
     POST /ask/stream  (cung body)  ->  text/event-stream (SSE), xem API.md:
       data: {"event": "sources", "in_scope": true, "sources": [...]}
       data: {"event": "delta", "text": "..."}      (lap lai)
@@ -19,20 +20,27 @@ import json
 import logging
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from datetime import date
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from starlette.background import BackgroundTask
+from starlette.concurrency import iterate_in_threadpool
 
 from . import config as cfg
-from . import guard, qdrant_setup, small_talk
+from . import qdrant_setup, session
 from .ingest import embed_consumer, embed_service
 from .models import encoders
 from .rag import query_model as qm
-from .small_talk import Intent
+from .router import guard, router_llm
+from .router.router_llm import Action
+from .router.small_talk import Intent
 
 log = logging.getLogger("uvicorn.error")
 _warmup = {"status": "disabled" if not cfg.WARMUP else "pending"}
@@ -62,6 +70,13 @@ async def lifespan(app):
     # Thread nen: server nhan request ngay (/health tra loi duoc), khong bat FE cho tren connection refused
     if cfg.WARMUP:
         threading.Thread(target=warm_up, name="model-warmup", daemon=True).start()
+    if cfg.ROUTER_ENABLED and not cfg.GEMINI_API_KEY:
+        log.warning("ROUTER_ENABLED nhung thieu GEMINI_API_KEY: router se loi o moi request va cau hoi di thang vao RAG")
+    if cfg.SESSION_ENABLED:
+        try:
+            session.get_store()  # nap LlamaIndex + tao engine SQLite luc khoi dong, khong doi den request dau tien
+        except Exception as e:  # service van khoi dong; request dau tien se thu lai
+            log.warning("khong khoi tao duoc session store (%s): se thu lai o request dau tien", type(e).__name__)
     # Khoi dong RabbitMQ consumer de nhan job embed tu file-service (chi chay khi RABBITMQ_URL duoc cau hinh)
     embed_consumer.start_consumer()
     yield
@@ -80,6 +95,8 @@ class AskRequest(BaseModel):
     reference_date: Optional[date] = None  # loc van ban con hieu luc tai ngay nay; mac dinh hom nay
     khoa: Optional[int] = Field(default=None, ge=1990, le=2100)  # khoa cua sinh vien; chi lay van ban ap dung cho khoa nay
     loai_van_ban: Optional[List[str]] = None  # chi tim trong cac loai van ban nay (vd ["thong_bao", "quy_che"])
+    session_id: Optional[str] = None  # UUID cua cuoc tro chuyen; bo trong thi server tao moi. Bi bo qua khi SESSION_ENABLED=false
+    reset: bool = False  # xoa lich su session truoc khi xu ly request nay
 
 
 class Source(BaseModel):
@@ -94,8 +111,9 @@ class AskResponse(BaseModel):
     answer: str
     in_scope: bool
     sources: List[Source]
-    # rag | greeting | thanks | goodbye | capability | meta | blocked (guard.py / small_talk.py)
+    # rag | greeting | thanks | goodbye | capability | meta | blocked | off_topic | clarify (do router_llm.py quyet dinh)
     intent: str = Intent.RAG.value
+    session_id: Optional[str] = None  # chi co khi SESSION_ENABLED
 
 
 @app.get("/health")
@@ -110,28 +128,6 @@ def _question(payload):
     if not question:
         raise HTTPException(status_code=400, detail="question khong duoc de trong")
     return question
-
-
-def _gate(question):
-    """Guard dau vao + small talk router, dung chung cho /ask va /ask/stream (truoc moi buoc RAG).
-
-    Tra ve (cau hoi dung cho RAG, reply); reply = (answer, in_scope, intent) khi khong can truy van / goi LLM, con lai None."""
-    if not cfg.GUARD_ENABLED:
-        return question, None
-    enforce = cfg.GUARD_MODE == "enforce"
-    verdict = guard.inspect_question(question)
-    if verdict.level == "suspicious" and enforce:
-        question = guard.strip_delimiters(question)
-    if (verdict.level == "block" and enforce) or not question:
-        intent = Intent.BLOCKED
-    else:
-        intent, question = small_talk.route(question)
-    guard.log_decision(question, intent, verdict)
-    if intent is Intent.BLOCKED:
-        return question, (cfg.GUARD_REFUSAL_ANSWER, False, intent)
-    if intent is not Intent.RAG:
-        return question, (small_talk.reply_for(intent), True, intent)
-    return question, None
 
 
 @contextmanager
@@ -157,24 +153,120 @@ def _sources(hits):
     ]
 
 
-@app.post("/ask", response_model=AskResponse)
-def ask(payload: AskRequest):
-    question, reply = _gate(_question(payload))
-    if reply:
-        answer, in_scope, intent = reply
-        return AskResponse(answer=answer, in_scope=in_scope, sources=[], intent=intent.value)
-    with _pipeline_errors():
-        answer, hits, in_scope = qm.ask(
-            question,
-            top_k=payload.top_k,
-            mode=payload.mode,
-            kho=payload.kho,
-            reference_date=payload.reference_date,
-            khoa=payload.khoa,
-            loai_van_ban=payload.loai_van_ban,
-        )
-    intent = Intent.BLOCKED if answer == cfg.GUARD_REFUSAL_ANSWER else Intent.RAG  # guard dau ra da chan cau tra loi
-    return AskResponse(answer=answer, in_scope=in_scope, sources=_sources(hits), intent=intent.value)
+@dataclass
+class _Turn:
+    """Moi thu cua mot request: cau hoi chuan hoa, session dang mo (neu bat) va khoa / kho hieu luc."""
+    question: str
+    session: Any = None  # session.Session; giu lock cho den _end()
+    sid: Optional[str] = None
+    khoa: Optional[int] = None
+    kho: Optional[str] = None
+
+
+def _valid_facts(raw):
+    """khoa / kho da luu, kiem lai bang chinh bo validator cua AskRequest; gia tri khong hop le bi bo."""
+    facts = {}
+    for name, value in raw.items():
+        try:
+            facts[name] = getattr(AskRequest(question="-", **{name: value}), name)
+        except ValidationError:
+            pass
+    return facts
+
+
+async def _begin(payload, request):
+    """Chuan hoa cau hoi, mo session (khi SESSION_ENABLED) va gop khoa / kho: gia tri trong request de len gia tri da luu.
+    reference_date khong bao gio duoc luu."""
+    t = _Turn(_question(payload))
+    stored = {}
+    if cfg.SESSION_ENABLED:
+        t.sid = str(uuid.uuid4()) if payload.session_id is None else session.parse_id(payload.session_id)
+        if t.sid is None:
+            raise HTTPException(status_code=400, detail="session_id phai la UUID")
+        key = session.key_for(t.sid, request.headers.get(cfg.SESSION_USER_HEADER))
+        try:
+            t.session = await (await session.store()).open(key, reset=payload.reset)
+        except Exception as e:  # loi session store khong duoc lam hong cau hoi: tra loi khong co lich su, chi ghi loai loi
+            log.warning("session %s: khong mo duoc session (%s), tra loi khong co lich su", session.digest(key), type(e).__name__)
+        stored = _valid_facts(t.session.facts) if t.session else {}
+    t.khoa = payload.khoa if payload.khoa is not None else stored.get("khoa")
+    t.kho = payload.kho or stored.get("kho")
+    return t
+
+
+def _end(t):
+    if t.session:
+        t.session.release()
+
+
+def _log_router(t, routed, action):
+    d = routed.decision
+    log.info(
+        "router intent=%s conf=%s action=%s model=%s cached=%s fallback=%s failure=%s latency_ms=%d session=%s history_turns=%d note=%s",
+        d.intent if d else "-", f"{d.confidence:.2f}" if d else "-", action.intent.value, routed.model, routed.cached,
+        "rag" if d is None else "-", routed.failure or "-", routed.latency_ms,
+        session.digest(t.sid) if t.sid else "-", len(t.session.history) // 2 if t.session else 0, action.note or "-",
+    )
+
+
+async def _plan(t):
+    """Quyet dinh cho request: Action co `answer` = tra loi co dinh (khong truy van / goi LLM), khong thi di tiep RAG voi `action.query`.
+
+    ROUTER_ENABLED: mot lan goi router (cau hoi + lich su + khoa / kho + co previous_was_clarify) tu suy luan y dinh; khong co
+    luat tu khoa nao. Router tat hoac loi (timeout, quota, JSON hong, het ngan sach RPM) thi cau hoi di thang vao RAG, van duoc
+    chuan hoa, quet doan trich, prompt co rao va guard dau ra bao ve; khong bao gio tra off_topic / clarify khi router loi."""
+    if not cfg.ROUTER_ENABLED:
+        return Action(Intent.RAG, query=t.question)
+    history = t.session.history if t.session else []
+    facts, previous_was_clarify = {"khoa": t.khoa, "kho": t.kho}, bool(t.session and t.session.previous_was_clarify)
+    routed = await router_llm.resolve(t.question, history, facts, previous_was_clarify)
+    action = (router_llm.apply_policy(routed.decision, t.question, facts, previous_was_clarify)
+              if routed.decision is not None else Action(Intent.RAG, query=t.question))
+    _log_router(t, routed, action)
+    return action
+
+
+def _pipeline_kwargs(t, payload):
+    return dict(top_k=payload.top_k, mode=payload.mode, kho=t.kho, reference_date=payload.reference_date, khoa=t.khoa,
+                loai_van_ban=payload.loai_van_ban)
+
+
+def _history(t):
+    return t.session.history if t.session else []
+
+
+async def _remember(t, answer, intent):
+    """Luu luot da hoan tat. Loi luu khong lam hong cau tra loi da co."""
+    if t.session:
+        try:
+            await t.session.add_turn(t.question, answer, intent.value, {"khoa": t.khoa, "kho": t.kho})
+        except Exception as e:
+            log.warning("session %s: khong luu duoc luot nay (%s)", session.digest(t.sid), type(e).__name__)
+
+
+@app.post("/ask", response_model=AskResponse, response_model_exclude_unset=True)  # exclude_unset: khong co session thi khong co khoa session_id
+async def ask(payload: AskRequest, request: Request):
+    t = await _begin(payload, request)
+    try:
+        action = await _plan(t)
+        if action.answer is not None:
+            answer, in_scope, hits, intent, store = action.answer, action.in_scope, [], action.intent, action.store
+        else:
+            kw = _pipeline_kwargs(t, payload)
+            if action.query != t.question:  # chi khi router viet lai: khong thi loi goi y het nhu truoc
+                kw["search_query"] = action.query
+            if _history(t):
+                kw["history"] = _history(t)
+            with _pipeline_errors():
+                answer, hits, in_scope = await run_in_threadpool(qm.ask, t.question, **kw)
+            intent = Intent.BLOCKED if answer == cfg.GUARD_REFUSAL_ANSWER else Intent.RAG  # guard dau ra da chan cau tra loi
+            store = intent is Intent.RAG
+        if store:
+            await _remember(t, answer, intent)
+        return AskResponse(answer=answer, in_scope=in_scope, sources=_sources(hits), intent=intent.value,
+                           **({"session_id": t.sid} if t.sid else {}))
+    finally:
+        _end(t)
 
 
 def _sse(data):
@@ -183,50 +275,59 @@ def _sse(data):
 
 
 @app.post("/ask/stream")
-def ask_stream(payload: AskRequest):
+async def ask_stream(payload: AskRequest, request: Request):
     """Nhu /ask nhung tra cau tra loi dang SSE theo tung doan token.
 
     Truy van + rerank chay truoc khi gui header, nen loi o buoc nay van tra ma HTTP (400/500/502) nhu /ask.
     Loi khi dang sinh cau tra loi thi gui su kien `error` (status 200 da gui roi) va dong stream, khong co [DONE].
+    Luot hoi dap chi duoc luu vao session sau delta cuoi, truoc `[DONE]`; stream loi / bi chan thi khong luu gi.
+    Lock session giu den khi stream ket thuc (hoac client ngat), de request ke tiep cung session doc lich su da day du.
     """
-    question, reply = _gate(_question(payload))
-    if reply:  # chao hoi / bi chan: cung hop dong SSE, sources rong + dung mot delta
-        answer, in_scope, intent = reply
-        hits, chunks = [], iter([answer])
-    else:
-        with _pipeline_errors():
-            hits = qm.find_hits(
-                question,
-                top_k=payload.top_k,
-                mode=payload.mode,
-                kho=payload.kho,
-                reference_date=payload.reference_date,
-                khoa=payload.khoa,
-                loai_van_ban=payload.loai_van_ban,
-            )
-            chunks = qm.generate_answer_stream(question, hits) if hits else iter([qm.NO_RESULT_ANSWER])
-        in_scope, intent = bool(hits), Intent.RAG
+    t = await _begin(payload, request)
+    try:
+        action = await _plan(t)
+        if action.answer is not None:  # chao hoi / bi chan / off_topic / clarify: cung hop dong SSE, sources rong + dung mot delta
+            hits, chunks, in_scope, intent, store = [], iter([action.answer]), action.in_scope, action.intent, action.store
+        else:
+            with _pipeline_errors():
+                hits = await run_in_threadpool(qm.find_hits, action.query or t.question, **_pipeline_kwargs(t, payload))
+                chunks = (
+                    qm.generate_answer_stream(t.question, hits, **({"history": _history(t)} if _history(t) else {}))
+                    if hits else iter([qm.NO_RESULT_ANSWER])
+                )
+            in_scope, intent, store = bool(hits), Intent.RAG, True
+    except BaseException:
+        _end(t)
+        raise
     sources = [s.model_dump() for s in _sources(hits)]
     # `intent` chi them vao su kien khi khac rag, de su kien cua cac cau hoi RAG giu nguyen tung byte
-    extra = {} if intent is Intent.RAG else {"intent": intent.value}
+    extra = {**({"session_id": t.sid} if t.sid else {}), **({} if intent is Intent.RAG else {"intent": intent.value})}
 
-    def events():
-        yield _sse({"event": "sources", "in_scope": in_scope, "sources": sources, **extra})
+    async def events():
         try:
-            for text in chunks:
-                yield _sse({"event": "delta", "text": text})
-        except guard.OutputBlocked:
-            yield _sse({"event": "error", "detail": cfg.GUARD_REFUSAL_ANSWER})
-            return
-        except Exception as e:
-            yield _sse({"event": "error", "detail": f"Loi khi goi LLM: {e}"})
-            return
-        yield _sse("[DONE]")
+            yield _sse({"event": "sources", "in_scope": in_scope, "sources": sources, **extra})
+            parts = []
+            try:
+                async for text in iterate_in_threadpool(chunks):
+                    parts.append(text)
+                    yield _sse({"event": "delta", "text": text})
+            except guard.OutputBlocked:
+                yield _sse({"event": "error", "detail": cfg.GUARD_REFUSAL_ANSWER})
+                return
+            except Exception as e:
+                yield _sse({"event": "error", "detail": f"Loi khi goi LLM: {e}"})
+                return
+            if store:  # truoc [DONE]: client dong ket noi ngay khi nhan [DONE] thi doan sau yield cuoi khong chay
+                await _remember(t, "".join(parts), intent)
+            yield _sse("[DONE]")
+        finally:
+            _end(t)
 
     return StreamingResponse(
         events(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        background=BackgroundTask(_end, t),  # events() chua kip chay (client ngat som) thi van nha lock
     )
 
 

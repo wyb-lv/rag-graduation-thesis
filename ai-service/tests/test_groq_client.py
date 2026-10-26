@@ -132,6 +132,25 @@ def test_error_after_retry_limit_is_clear():
     assert len(sleeps) == cfg.GROQ_MAX_RETRIES  # khong ngu them sau lan thu cuoi
 
 
+def test_retries_zero_makes_one_attempt_without_sleeping_and_says_so():
+    client = FakeClient([rate_limit_error(), Resp("khong duoc toi")])
+    limiter, _ = make_limiter()
+    sleeps = []
+    with pytest.raises(groq_client.GroqError, match=r"sau 1 lan thu"):
+        groq_client.chat(MESSAGES, client=client, limiter=limiter, sleep=sleeps.append, retries=0)
+    assert len(client.calls) == 1 and sleeps == []
+
+
+def test_retries_override_does_not_change_the_default():
+    client = FakeClient([rate_limit_error(), Resp("xong")])
+    limiter, _ = make_limiter()
+    assert groq_client.chat(MESSAGES, client=client, limiter=limiter, sleep=lambda s: None, retries=1) == "xong"
+    client = FakeClient([rate_limit_error() for _ in range(10)])
+    with pytest.raises(groq_client.GroqError, match=rf"sau {cfg.GROQ_MAX_RETRIES + 1} lan thu"):
+        groq_client.chat([{"role": "user", "content": "khac"}], client=client, limiter=limiter, sleep=lambda s: None)  # khac MESSAGES: tranh cache
+    assert len(client.calls) == cfg.GROQ_MAX_RETRIES + 1
+
+
 def test_non_retryable_error_propagates_immediately():
     bad = groq.BadRequestError("bad", response=httpx.Response(400, request=_request()), body=None)
     client = FakeClient([bad, Resp("khong duoc toi")])
