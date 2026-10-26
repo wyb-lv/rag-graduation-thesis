@@ -5,7 +5,7 @@
   - RabbitMQ consumer: nhận job từ file-service sau khi OCR xong
 
 Mỗi tài liệu được làm sạch và chia chunk theo Chương/Điều/khoản (xem chunker.py), encode bằng BGE-M3 (dense + sparse),
-thêm vector BM25 (bm25.py) nếu collection có, rồi upsert vào Qdrant collection `quy_dinh_hybrid`.
+rồi upsert vào Qdrant collection `quy_dinh_hybrid`.
 """
 import logging
 import re
@@ -14,7 +14,6 @@ from typing import Optional
 
 from qdrant_client import QdrantClient, models
 
-from .. import bm25
 from .. import config as cfg
 from .. import qdrant_setup
 from ..models import encoders
@@ -81,9 +80,6 @@ def embed_document(
     _ensure_collection(client)
     # Embed lại (sau OCR lại) phải thay vector cũ, không được chồng lên
     delete_document_vectors(document_id)
-    # Ghi bm25 bất kể HYBRID_LEGS, để bật/tắt nhánh sau này không phải index lại. Collection cũ không có bm25 thì bỏ qua
-    with_bm25 = qdrant_setup.has_bm25(client, cfg.QDRANT_COLLECTION)
-
     total_upserted = 0
     for batch_start in range(0, len(paragraphs), cfg.UPSERT_BATCH_SIZE):
         batch = paragraphs[batch_start: batch_start + cfg.UPSERT_BATCH_SIZE]
@@ -113,10 +109,6 @@ def embed_document(
                 cfg.DENSE_VECTOR_NAME: dvec.tolist(),
                 cfg.SPARSE_VECTOR_NAME: encoders.to_sparse_vector(lex),
             }
-            if with_bm25:
-                bm25_vec = bm25.bm25_doc_vector(para)
-                if bm25_vec.indices:  # đoạn không có token nào thì bỏ vector bm25, các vector khác vẫn ghi
-                    vector[cfg.BM25_VECTOR_NAME] = bm25_vec
 
             points.append(models.PointStruct(id=str(uuid.uuid4()), vector=vector, payload=payload))
 

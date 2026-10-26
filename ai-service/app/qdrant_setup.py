@@ -1,6 +1,6 @@
 """Tạo collection Qdrant và kiểm tra các nhánh hybrid có trong collection.
 
-Chỉ cần qdrant_client + config (không nạp model), nên scripts/migrate_add_bm25.py dùng chung được với embed_service.
+Chỉ cần qdrant_client + config (không nạp model).
 """
 import logging
 from typing import Iterable, Optional
@@ -13,12 +13,12 @@ log = logging.getLogger("uvicorn.error")
 
 
 def create_collection(client: QdrantClient, name: str):
-    """Tạo collection mới đủ dense + sparse + bm25 và payload index. Gọi khi collection chưa tồn tại."""
+    """Tạo collection mới đủ dense + sparse và payload index. Gọi khi collection chưa tồn tại."""
     client.create_collection(
         collection_name=name,
         vectors_config={
             cfg.DENSE_VECTOR_NAME: models.VectorParams(
-                size=cfg.EMBED_DIM,
+                size=cfg.EMBED_DIM, 
                 distance=models.Distance.COSINE,
                 hnsw_config=models.HnswConfigDiff(m=cfg.HNSW_M, ef_construct=cfg.HNSW_EF_CONSTRUCT),
                 on_disk=False,
@@ -27,10 +27,6 @@ def create_collection(client: QdrantClient, name: str):
         sparse_vectors_config={
             # Trọng số học được của BGE-M3: không dùng IDF
             cfg.SPARSE_VECTOR_NAME: models.SparseVectorParams(index=models.SparseIndexParams(on_disk=False)),
-            # BM25: Qdrant nhân IDF lúc truy vấn, bm25.py chỉ tạo phần tf
-            cfg.BM25_VECTOR_NAME: models.SparseVectorParams(
-                index=models.SparseIndexParams(on_disk=False), modifier=models.Modifier.IDF
-            ),
         },
         optimizers_config=models.OptimizersConfigDiff(indexing_threshold=cfg.INDEXING_THRESHOLD),
     )
@@ -50,10 +46,6 @@ def vector_names(client: QdrantClient, name: str) -> set[str]:
     return dense | set(params.sparse_vectors or {})
 
 
-def has_bm25(client: QdrantClient, name: str) -> bool:
-    return cfg.BM25_VECTOR_NAME in vector_names(client, name)
-
-
 def missing_legs(client: QdrantClient, name: str, legs: Iterable[str]) -> list[str]:
     present = vector_names(client, name)
     return [leg for leg in legs if cfg.HYBRID_LEG_VECTORS[leg] not in present]
@@ -63,7 +55,7 @@ def validate_legs(client: QdrantClient, name: Optional[str] = None, legs: Option
     """Lúc khởi động: mọi nhánh trong HYBRID_LEGS phải có vector tương ứng trong collection, nếu không thì báo lỗi.
 
     Qdrant chưa sẵn sàng hoặc collection chưa tồn tại thì chỉ cảnh báo/ghi log, không chặn khởi động
-    (collection sẽ được tạo đủ dense/sparse/bm25 ở lần embed đầu tiên).
+    (collection sẽ được tạo đủ dense/sparse ở lần embed đầu tiên).
     """
     name = name or cfg.QDRANT_COLLECTION
     legs = tuple(legs or cfg.HYBRID_LEGS)
@@ -78,8 +70,7 @@ def validate_legs(client: QdrantClient, name: Optional[str] = None, legs: Option
     if missing:
         raise RuntimeError(
             f"Collection '{name}' thiếu vector cho nhánh {', '.join(missing)} "
-            f"(HYBRID_LEGS={','.join(legs)}). Chạy scripts/migrate_add_bm25.py để tạo collection mới có bm25 rồi đặt "
-            f"QDRANT_COLLECTION/HYBRID_LEGS/BM25_AVG_LEN/BM25_TOKENIZER trong app/config.py theo hướng dẫn của script, "
+            f"(HYBRID_LEGS={','.join(legs)}). Embed lại tài liệu vào collection tạo bằng qdrant_setup.create_collection, "
             f"hoặc bỏ nhánh đó khỏi HYBRID_LEGS."
         )
     log.info("Nhánh hybrid đang dùng: %s (collection '%s')", ", ".join(legs), name)

@@ -1,0 +1,206 @@
+# Toàn bộ hệ thống: cp .env.example .env (bắt buộc đặt JWT_SECRET) rồi `docker compose up -d --build`.
+# FE chỉ gọi api-gateway (http://localhost:${GATEWAY_PORT:-9090}). ai-service đọc API_KEY / GROQ_QWEN_MODEL từ ai-service/.env.
+name: chatbot-hsu
+
+services:
+  # ── Hạ tầng ──────────────────────────────────────────────────────────────────
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: hsu-postgres-auth
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: ${AUTH_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-change_me_auth_db}
+    ports:
+      - "5436:5432"   # 5432 thường bị Postgres cài sẵn trên máy chiếm
+    volumes:
+      - auth_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-file:
+    image: postgres:17-alpine
+    container_name: file-service-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-file_service}
+      POSTGRES_USER: ${POSTGRES_USER:-file_service}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+    ports:
+      - "5433:5432"
+    volumes:
+      - file_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: file-service-rabbitmq
+    # Dữ liệu RabbitMQ gắn với hostname, cố định để không mất hàng đợi khi tạo lại container
+    hostname: file-service-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-file_service}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-secret}
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # Giao diện quản trị: http://localhost:15672
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # minio/minio đã bị gỡ khỏi Docker Hub và Quay; dùng bản Chainguard (miễn phí, chỉ có tag latest)
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    container_name: file-service-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-file_service}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-file_service_secret}
+    ports:
+      - "9000:9000"
+      - "9001:9001"   # Giao diện quản trị: http://localhost:9001
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    container_name: kltn-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST + dashboard (http://localhost:6333/dashboard)
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  # ── Ứng dụng ─────────────────────────────────────────────────────────────────
+  auth-service:
+    build: ./auth-service
+    container_name: hsu-auth-service
+    restart: unless-stopped
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: ${AUTH_DB_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${AUTH_DB_PASSWORD:-change_me_auth_db}
+      APPLICATION_JWT_SECRET_KEY: ${JWT_SECRET:?đặt JWT_SECRET (>= 32 ký tự) trong .env}
+      APP_SEED_ENABLED: ${AUTH_SEED_ENABLED:-false}
+      GRPC_SERVER_PORT: 9091
+    ports:
+      - "8081:8081"   # REST
+      - "9091:9091"   # gRPC (gateway validate token)
+
+  file-service:
+    build: ./file-service
+    image: file-service:latest
+    container_name: file-service
+    restart: unless-stopped
+    depends_on:
+      postgres-file:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-file:5432/${POSTGRES_DB:-file_service}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-file_service}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-file_service}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-secret}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_USER:-file_service}
+      MINIO_SECRET_KEY: ${MINIO_PASSWORD:-file_service_secret}
+      EMBED_ENABLED: ${EMBED_ENABLED:-true}
+    ports:
+      - "8080:8080"
+
+  ai-service:
+    build: ./ai-service
+    image: ai-service:latest
+    container_name: kltn-ai-service
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    env_file: ./ai-service/.env   # API_KEY, GROQ_QWEN_MODEL, ...
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-file_service}:${RABBITMQ_PASSWORD:-secret}@rabbitmq:5672/
+      FILE_SERVICE_URL: http://file-service:8080
+    ports:
+      - "8001:8000"   # API + Swagger UI (http://localhost:8001/docs); 8000 hay bị uvicorn chạy tay trên máy chiếm
+    volumes:
+      - hf_cache:/data/hf   # BGE-M3 + jina reranker (~3GB), tải lần đầu khi có request /ask
+      - groq_cache:/data/groq_cache
+    # Cần NVIDIA GPU + Docker Desktop (WSL2). Máy không có GPU: xóa khối `deploy` và build bản CPU (xem ai-service/Dockerfile).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+      - file-service
+      - ai-service
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:8081
+      FILE_SERVICE_URL: http://file-service:8080
+      AI_SERVICE_URL: http://ai-service:8000
+      AUTH_GRPC_HOST: auth-service
+      AUTH_GRPC_PORT: 9091
+      GATEWAY_CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:5174}
+      GATEWAY_AI_RPS: ${AI_RPS:-10}
+      GATEWAY_FILE_RPS: ${FILE_RPS:-20}
+      GATEWAY_AUTH_RPS: ${AUTH_RPS:-5}
+    ports:
+      - "${GATEWAY_PORT:-9090}:9090"
+
+# Tên volume giữ nguyên như các file compose cũ để không mất dữ liệu đã có.
+volumes:
+  auth_postgres_data:
+    name: auth-service_postgres_data
+  file_postgres_data:
+    name: file-service_postgres_data
+  rabbitmq_data:
+    name: file-service_rabbitmq_data
+  minio_data:
+    name: file-service_minio_data
+  qdrant_storage:
+    # QDRANT_VOLUME=model_qdrant_storage nếu đã có dữ liệu index từ trước (xem .env.example)
+    name: ${QDRANT_VOLUME:-hsu_qdrant_data}
+  hf_cache:
+    name: kltn_hf_cache
+  groq_cache:
+    name: kltn_groq_cache

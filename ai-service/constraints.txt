@@ -21,7 +21,7 @@ scipy==1.18.1
 scikit-learn==1.9.1
 pymupdf==1.28.2
 pytest==8.4.2
-pyvi==0.1.1
-sklearn-crfsuite==0.5.0
-python-crfsuite==0.9.12
-tabulate==0.10.0
+llama-index-core==0.14.25
+aiosqlite==0.22.1
+SQLAlchemy==2.1.6
+greenlet==3.5.6

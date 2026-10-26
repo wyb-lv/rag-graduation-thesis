@@ -72,7 +72,7 @@ def test_empty_sparse_query_falls_back_to_dense_prefetch_only(stub):
 
 def test_unknown_mode_is_rejected(stub):
     with pytest.raises(ValueError):
-        qm.retrieve("cau hoi", mode="bm25")
+        qm.retrieve("cau hoi", mode="khong_co")
     assert stub.qdrant.calls == []
 
 
@@ -134,7 +134,7 @@ def test_ask_hybrid_rerank_cites_top5_chunks(stub, monkeypatch):
 
 
 def test_rerank_score_below_floor_counts_as_no_result(stub, monkeypatch):
-    monkeypatch.setattr(encoders, "rerank_scores", lambda q, passages: [0.0] * len(passages))
+    monkeypatch.setattr(encoders, "rerank_scores", lambda q, passages: [cfg.RERANK_MIN_SCORE - 0.01] * len(passages))
     answer, hits, in_scope = qm.ask("cau hoi", mode="hybrid_rerank")
     assert (answer, hits, in_scope) == (qm.NO_RESULT_ANSWER, [], False)
     assert stub.groq_calls == []

@@ -12,8 +12,9 @@ MAX_CHARS = 1500       # chunk dài hơn mức này thì tách theo khoản
 TARGET_CHARS = 1200    # mức gom khoản khi tách
 MIN_CHARS = 150        # chunk ngắn hơn mức này thì gộp vào chunk kề
 
-# OCR hay làm hỏng dấu ("Piéu", "Điểu", "Chuong") nên regex tiêu đề để mờ.
-_DIEU = re.compile(r"^\s*(?:Đ|D|P|B)\S{0,3}u\s*(\d{1,3})\s*[.:]\s*(.*)$", re.I)
+# OCR hay làm hỏng dấu ("Piéu", "Ei6u", "Điểu", "Chuong") nên regex tiêu đề để mờ: chấp nhận ký tự rác/ô bảng đứng trước ("! Điều 9.",
+# "| : | Điều 12.", ". Điều 5.") và dấu chấm bị đọc thành "," hoặc ";" ("Điều 9, Xử lý ..."; xem _heading).
+_DIEU = re.compile(r"^[\s|!*#~_:.,;'\"‘’“”`]*(?:Đ|D|P|B|E)\S{0,3}u\s*(\d{1,3})\s*([.:,;])\s*(.*)$", re.I)
 _CHUONG = re.compile(r"^\s*Ch\S{1,4}ng\s+([IVXLC1lJ]{1,6})\b[.\s]*(.*)$", re.I)
 _PHULUC = re.compile(r"^\s*PH[UỤ]\s*L[UỤ]C\b(.*)$", re.I)
 _NOI_NHAN = re.compile(r"^\s*N[oơ]i\s+nh[aậ]n\b", re.I)
@@ -22,6 +23,26 @@ _DIEM = re.compile(r"^\s*(?:[a-zđ]\)|[-•+–]\s)\s*\S")
 _PAGE_NUM = re.compile(r"^\s*[|\[(]?\s*(?:Trang\s*[|:]?\s*)?\d{1,3}\s*[|\])]?\s*$", re.I)
 _RUNNING_HEADER = re.compile(r"\bM[aãàáạ]\s*(?:hi[eêéệ]u|t[aàá]i\s*li[eêéệ]u)\b\s*:", re.I)
 _TOC_LINE = re.compile(r"\.{5,}|…{3,}")
+
+
+def _heading(s: str) -> Optional[tuple[int, str]]:
+    """(số Điều, tiêu đề) nếu dòng là tiêu đề Điều, không thì None."""
+    m = _DIEU.match(s)
+    if not m:
+        return None
+    title = re.split(r"\s*\|", m.group(3))[0].strip()  # tiêu đề dựng thành hàng bảng: bỏ các ô phía sau
+    if m.group(2) in ",;" and (not title[:1].isupper() or re.match(r"(?:Điều|Khoản|Điểm)\b", title)):
+        return None  # "Điều 9, 10 và 11 của ..." là dẫn chiếu giữa câu, không phải tiêu đề
+    return int(m.group(1)), title
+
+
+def _unpipe(s: str) -> Optional[str]:
+    """Tiêu đề Điều/Chương bị OCR dựng thành hàng bảng ("| Điều 3. Học phí | / |  |"): trả về ô chứa tiêu đề."""
+    for cell in s.split("|"):
+        c = cell.strip()
+        if _heading(c) or _CHUONG.match(c):
+            return c
+    return None
 
 
 @dataclass
@@ -38,6 +59,8 @@ def clean_lines(text: str) -> list[str]:
         s = raw.strip()
         if not s:
             continue
+        if "|" in s:
+            s = _unpipe(s) or s  # không để bộ lọc "dòng toàn ký hiệu" xóa mất tiêu đề nằm trong hàng bảng
         if _PAGE_NUM.match(s) or _RUNNING_HEADER.search(s) or _TOC_LINE.search(s):
             continue
         letters = sum(c.isalpha() for c in s)
@@ -109,20 +132,27 @@ def _split_long(units: list[str], limit: int) -> list[str]:
 
 
 def _find_sections(lines: list[str]) -> list[tuple[int, int, str]]:
-    """Vị trí các tiêu đề Điều thuộc phần thân: lấy lần xuất hiện cuối của mỗi số (bỏ bìa Quyết định, mục lục)
-    rồi giữ chuỗi số tăng dần.
+    """Các tiêu đề Điều thuộc phần thân: chuỗi tiêu đề có số tăng dần tốt nhất, điểm = số tiêu đề trong chuỗi trừ số tiêu đề bị
+    bỏ qua NẰM GIỮA chuỗi (hòa thì lấy chuỗi bắt đầu muộn hơn, tức gọn hơn). Bìa Quyết định ("Điều 1-3"), mục lục và dẫn chiếu lạc
+    dòng không vào chuỗi: nối bìa sang thân bài sẽ phải bỏ qua cả các Điều 1, 2 thật nằm giữa, còn một dòng nhiễu lạc chỉ bị bỏ
+    qua một lần. (Cách cũ "lần xuất hiện cuối + lọc tham lam" bị một dòng mục lục số cao đứng sớm chặn hết tiêu đề thật phía sau.)
     """
-    last: dict[int, int] = {}
-    for i, s in enumerate(lines):
-        m = _DIEU.match(s)
-        if m:
-            last[int(m.group(1))] = i
-    kept, prev = [], 0
-    for n, i in sorted(last.items(), key=lambda kv: kv[1]):
-        if n > prev:
-            kept.append((i, n, _DIEU.match(lines[i]).group(2).strip()))
-            prev = n
-    return kept
+    heads = [(i, *h) for i, s in enumerate(lines) if (h := _heading(s))]
+    best: list[tuple[int, int, int]] = []  # theo từng tiêu đề: (điểm chuỗi kết thúc ở đó, vị trí bắt đầu, tiêu đề đứng trước)
+    for j, (pos, n, _) in enumerate(heads):
+        cand = (1, pos, -1)
+        for k in range(j):
+            if heads[k][1] < n:
+                cand = max(cand, (best[k][0] + 1 - (j - k - 1), best[k][1], k))
+        best.append(cand)
+    if not best:
+        return []
+    j = max(range(len(heads)), key=lambda j: (best[j][0], best[j][1], heads[j][0]))
+    chain = []
+    while j >= 0:
+        chain.append(heads[j])
+        j = best[j][2]
+    return chain[::-1]
 
 
 def _chuong_label(m: re.Match) -> str:

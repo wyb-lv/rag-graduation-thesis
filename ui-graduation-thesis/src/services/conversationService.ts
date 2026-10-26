@@ -1,133 +1,106 @@
 import type { SourceCitation } from '@/types'
 import rawData from '@/data/conversations.json'
+import { authFetch, getKhoa } from '@/services/authService'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9090'
 
-// Khớp với Source trong ai-service/api.py
 interface RawApiSource {
   source: string
   text: string
-  score: number // điểm rerank nếu có rerank, không thì cosine (dense) / RRF (hybrid)
-  rerank_score: number | null
-  payload: Record<string, unknown>
+  score: number
 }
-
-// Các sự kiện `data:` của POST /ask/stream (xem ai-service/API.md)
-type StreamEvent =
-  | { event: 'sources'; in_scope: boolean; sources: RawApiSource[] }
-  | { event: 'delta'; text: string }
-  | { event: 'error'; detail: string }
 
 export interface StreamCallbacks {
   onSources?: (sources: SourceCitation[], inScope: boolean) => void
   onDelta?: (text: string) => void
+  onSession?: (sessionId: string) => void
 }
 
-export interface AskOptions {
-  top_k?: number
-  mode?: 'dense' | 'hybrid' | 'hybrid_rerank'
-  kho?: string
-  reference_date?: string // YYYY-MM-DD
-  signal?: AbortSignal
-}
-
-function mapSources(sources: RawApiSource[]): SourceCitation[] {
-  return sources.map((s, index) => ({
-    id: `src-${Date.now()}-${index}`,
-    type: 'document',
-    title: s.source,
-    description: `Độ tương đồng: ${(s.score * 100).toFixed(1)}%`,
-    text: s.text,
-    score: s.score,
-    fileType: s.source.split('.').pop()?.toUpperCase() || 'DOC',
-  }))
-}
-
-/**
- * Gọi POST /ask/stream và đọc SSE: `sources` một lần, `delta` nhiều lần, kết thúc bằng `[DONE]`.
- * Không kết nối được backend -> trả lời mô phỏng. Server báo lỗi (HTTP 4xx/5xx, sự kiện `error`,
- * stream đứt trước [DONE]) -> throw để UI hiển thị lỗi.
- */
+// sessionId: server giữ lịch sử theo id này; gửi lại id của hội thoại để câu hỏi sau hiểu được câu trước
 export async function askQuestionStream(
   question: string,
   callbacks: StreamCallbacks,
-  options: AskOptions = {}
+  top_k?: number,
+  sessionId?: string
 ): Promise<void> {
-  const { onSources, onDelta } = callbacks
-  const { signal, ...params } = options
-
-  let res: Response
+  const { onSources, onDelta, onSession } = callbacks
   try {
-    res = await fetch(`${API_BASE_URL}/ask/stream`, {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    const res = await authFetch(`${API_BASE_URL}/api/ai/ask/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ question, ...params }),
-      signal,
+      headers,
+      body: JSON.stringify({
+        question,
+        khoa: getKhoa(),
+        ...(top_k !== undefined ? { top_k } : {}),
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }),
     })
-  } catch (err: unknown) {
-    if (signal?.aborted) throw err
-    console.warn(`[ChatHSU SSE] Không thể kết nối tới ${API_BASE_URL}/ask/stream:`, err)
-    // Fallback mô phỏng nếu chưa bật FastAPI Backend
-    onSources?.(rawData.sources as SourceCitation[], true)
-    onDelta?.(
-      `Mình đã nhận được câu hỏi: "${question}".\n\n(Lưu ý: Chưa thể kết nối tới FastAPI Backend tại ${API_BASE_URL}. Hãy chạy lệnh: \`uvicorn api:app --reload --port 8000\` để nhận câu trả lời dạng SSE stream từ mô hình RAG).`
-    )
-    return
-  }
-
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}))
-    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
-    throw new Error(detail || `Lỗi máy chủ (${res.status})`)
-  }
-  if (!res.body) {
-    throw new Error('Trình duyệt không hỗ trợ ReadableStream.')
-  }
-
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-
-  // Trả về true khi gặp [DONE]
-  const handleEvent = (block: string): boolean => {
-    const data = block
-      .split('\n')
-      .filter((line) => line.startsWith('data:'))
-      .map((line) => line.slice(5).replace(/^ /, ''))
-      .join('\n')
-    if (!data) return false
-    if (data === '[DONE]') return true
-
-    let payload: StreamEvent
-    try {
-      payload = JSON.parse(data)
-    } catch (e) {
-      console.warn('[SSE] Lỗi parse JSON:', data, e)
-      return false
+    if (res.status === 401) throw new Error('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.')
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}))
+      throw new Error(errorData.detail || errorData.message || `Lỗi máy chủ (${res.status})`)
     }
-    if (payload.event === 'sources') onSources?.(mapSources(payload.sources || []), payload.in_scope)
-    else if (payload.event === 'delta') onDelta?.(payload.text)
-    else if (payload.event === 'error') throw new Error(payload.detail || 'Lỗi khi sinh câu trả lời')
-    return false
-  }
-
-  try {
+    if (!res.body) {
+      throw new Error('Trình duyệt không hỗ trợ ReadableStream.')
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
     while (true) {
       const { done, value } = await reader.read()
+
       if (done) break
 
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n')
-      const blocks = buffer.split('\n\n')
-      buffer = blocks.pop() ?? ''
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n\n')
+      buffer = lines.pop() ?? ''
 
-      for (const block of blocks) {
-        if (handleEvent(block)) return
+      for (const line of lines) {
+        const trimmedLine = line.trim()
+
+        if (trimmedLine.startsWith('data: ')) {
+          const raw = trimmedLine.slice(6).trim()
+
+          if (raw === '[DONE]') return
+          try {
+            const payload = JSON.parse(raw)
+
+            if (payload.event === 'sources' && payload.session_id) onSession?.(payload.session_id)
+            if (payload.event === 'sources' && onSources) {
+              const mappedSources: SourceCitation[] = (payload.sources || []).map(
+                (s: RawApiSource, index: number) => ({
+                  id: `src-${Date.now()}-${index}`,
+                  type: 'document',
+                  title: s.source,
+                  description: `Độ tương đồng: ${(s.score * 100).toFixed(1)}%`,
+                  text: s.text,
+                  score: s.score,
+                  fileType: s.source.split('.').pop()?.toUpperCase() || 'DOC',
+                })
+              )
+              onSources(mappedSources, payload.in_scope ?? true)
+            } else if (payload.event === 'delta' && onDelta) {
+              onDelta(payload.text)
+            }
+          } catch (e) {
+            console.warn('[SSE] Lỗi parse JSON:', raw, e)
+          }
+        }
       }
     }
-    if (buffer && handleEvent(buffer)) return
-    throw new Error('Kết nối tới máy chủ bị ngắt trước khi trả lời xong.')
-  } finally {
-    reader.cancel().catch(() => {})
+  } catch (err: unknown) {
+    // Chỉ lỗi mạng (backend chưa chạy) mới dùng bản mô phỏng; lỗi HTTP/401 phải báo cho người dùng
+    if (!(err instanceof TypeError)) throw err
+    console.warn(`[ChatHSU SSE] Không thể kết nối tới ${API_BASE_URL}/api/ai/ask/stream:`, err)
+    // Fallback mô phỏng nếu chưa bật API Gateway
+    if (onSources) {
+      onSources(rawData.sources as SourceCitation[], true)
+    }
+    if (onDelta) {
+      const mockText = `Mình đã nhận được câu hỏi: "${question}".\n\n(Lưu ý: Chưa thể kết nối tới API Gateway tại ${API_BASE_URL}. Hãy chạy \`docker compose up -d\` rồi tải lại trang).`
+      onDelta(mockText)
+    }
   }
 }
 

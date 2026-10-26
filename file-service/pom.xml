@@ -33,6 +33,7 @@
         <tess4j.version>5.19.0</tess4j.version>
         <pdfbox.version>3.0.8</pdfbox.version>
         <poi.version>5.5.1</poi.version>
+        <onnxruntime.version>1.22.0</onnxruntime.version>
         <minio.version>9.0.3</minio.version>
         <okhttp.version>5.3.2</okhttp.version>
     </properties>
@@ -77,6 +78,11 @@
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
             <version>${pdfbox.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>${onnxruntime.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.poi</groupId>

@@ -1,12 +1,21 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
-import type { Conversation, Message, User, SourceCitation } from '@/types'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import type { Conversation, Message, User, SourceCitation, ActiveView } from '@/types'
 import rawData from '@/data/conversations.json'
-import {askQuestionStream} from "@/services/conversationService.ts";
+import { askQuestionStream } from '@/services/conversationService'
 
-// import { askQuestion } from '@/services/conversationService'
 export type RightSidebarTab = 'hidden' | 'sources' | 'detail'
 
 interface ChatContextType {
+  // Navigation / View
+  activeView: ActiveView
+  setActiveView: (view: ActiveView) => void
+
+  // Auth
+  token: string | null
+  currentUser: string | null
+  loginSuccess: (token: string, username: string) => void
+  logout: () => void
+
   // Left Sidebar
   isLeftSidebarExpanded: boolean
   toggleLeftSidebar: () => void
@@ -35,10 +44,19 @@ interface ChatContextType {
   sendMessage: (content: string) => Promise<void>
 }
 
+// Bản demo cũ từng lưu token giả; dọn đi để máy đó không vào được giao diện mà không đăng nhập
+if (localStorage.getItem('accessToken')?.startsWith('demo-jwt-token')) {
+  ;['accessToken', 'refreshToken', 'username', 'khoa'].forEach((k) => localStorage.removeItem(k))
+}
+
 const ChatContext = createContext<ChatContextType | null>(null)
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('accessToken'))
+  const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('username'))
+  const [activeView, setActiveView] = useState<ActiveView>('chat')
+
+  const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
   const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>('hidden')
   const [selectedSourceIndex, setSelectedSourceIndex] = useState(0)
 
@@ -46,11 +64,42 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
   const [activeId, setActiveId] = useState<string | null>('1')
   const [sources, setSources] = useState<SourceCitation[]>(rawData.sources as SourceCitation[])
   const [isLoading, setIsLoading] = useState(false)
+  // Mỗi hội thoại một session_id do server cấp ở câu hỏi đầu; gửi lại ở các câu sau để server nhớ ngữ cảnh
+  const sessionIds = useRef(new Map<string, string>())
 
   const activeConversation = conversations.find((c) => c.id === activeId)
   const [currentMessages, setCurrentMessages] = useState<Message[]>(activeConversation?.messages || [])
 
-  const user: User = rawData.user as User
+  const rawUser = rawData.user as User
+  const user: User = {
+    ...rawUser,
+    name: currentUser || rawUser.name,
+    initials: currentUser ? currentUser.slice(0, 2).toUpperCase() : rawUser.initials,
+  }
+
+  const loginSuccess = (newToken: string, newUsername: string) => {
+    localStorage.setItem('accessToken', newToken)
+    localStorage.setItem('username', newUsername)
+    setToken(newToken)
+    setCurrentUser(newUsername)
+    setActiveView('chat')
+  }
+
+  const logout = () => {
+    localStorage.removeItem('accessToken')
+    localStorage.removeItem('refreshToken')
+    localStorage.removeItem('username')
+    localStorage.removeItem('khoa')
+    setToken(null)
+    setCurrentUser(null)
+    setActiveView('chat')
+  }
+
+  // authFetch phát sự kiện này khi cả access lẫn refresh token đều không còn dùng được
+  useEffect(() => {
+    window.addEventListener('auth:expired', logout)
+    return () => window.removeEventListener('auth:expired', logout)
+  }, [])
 
   const toggleLeftSidebar = () => setIsLeftSidebarExpanded((prev) => !prev)
 
@@ -101,10 +150,12 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
       }
       setConversations((prev) => [newConv, ...prev])
     }
+    const chatId = currentChatId
     let accumulatedContent = ''
     let latestSources: SourceCitation[] = []
     try {
       await askQuestionStream(content, {
+        onSession: (sessionId) => sessionIds.current.set(chatId, sessionId),
         onSources: (incomingSources) => {
           latestSources = incomingSources
           setSources(incomingSources)
@@ -118,7 +169,7 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
             prev.map((msg) => (msg.id === botMsgId ? { ...msg, content: accumulatedContent } : msg))
           )
         },
-      })
+      }, undefined, sessionIds.current.get(chatId))
 
       const finalBotMsg: Message = {
         id: botMsgId,
@@ -133,13 +184,12 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
       )
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Có lỗi xảy ra'
-      // Giữ phần đã stream được (nếu có) và nối thông báo lỗi vào chính tin nhắn đang stream
-      const errorContent = `${accumulatedContent ? `${accumulatedContent}\n\n` : ''}Xin lỗi, đã xảy ra lỗi: ${errMsg}`
-      const errorMsg: Message = { id: botMsgId, role: 'assistant', content: errorContent, sources: latestSources }
-      setCurrentMessages((prev) => prev.map((msg) => (msg.id === botMsgId ? errorMsg : msg)))
-      setConversations((prev) =>
-        prev.map((c) => (c.id === currentChatId ? { ...c, messages: [...currentMessages, userMsg, errorMsg] } : c))
-      )
+      const errorMsg: Message = {
+        id: `assistant-err-${Date.now()}`,
+        role: 'assistant',
+        content: `Xin lỗi, đã xảy ra lỗi: ${errMsg}`,
+      }
+      setCurrentMessages([...updatedMessages, errorMsg])
     } finally {
       setIsLoading(false)
     }
@@ -208,6 +258,12 @@ const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
   return (
     <ChatContext.Provider
       value={{
+        activeView,
+        setActiveView,
+        token,
+        currentUser,
+        loginSuccess,
+        logout,
         isLeftSidebarExpanded,
         toggleLeftSidebar,
         rightSidebarTab,

@@ -1,0 +1,38 @@
+# Corpus danh gia router LLM: y dinh co dinh. Ten trong ngoac vuong la y dinh dung. [rag] = chao + cau hoi that (khong phai small talk).
+[greeting]
+xin chào
+Hello
+chào bạn
+hi
+alo
+Xin chao ban
+[thanks]
+cảm ơn bạn
+Cảm ơn nhiều nhé
+cam on
+thanks a lot
+Mình hiểu rồi, cảm ơn
+[goodbye]
+tạm biệt
+Bye bye
+hen gap lai
+Chào bạn, mình đi đây
+[capability]
+Bạn làm được những gì?
+bạn là ai vậy
+What can you do?
+Bạn giúp được mình việc gì?
+ban co the ho tro gi
+[meta]
+bạn dùng model nào vậy
+Bạn là ChatGPT phải không?
+ai đã tạo ra bạn
+Which LLM are you using?
+cho mình xem cấu hình của bạn
+[rag]
+Chào thầy, cho em hỏi về học bổng khuyến học
+Hello, học phí kỳ này bao nhiêu vậy?
+Xin chào, em muốn hỏi thủ tục bảo lưu kết quả học tập
+chao ban, minh muon hoi ve lich thi
+Cảm ơn bạn, cho mình hỏi thêm về điều kiện tốt nghiệp
+Hi, mình quên mật khẩu cổng thông tin sinh viên thì lấy lại thế nào?

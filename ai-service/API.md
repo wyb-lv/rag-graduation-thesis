@@ -2,7 +2,7 @@
 
 API tra loi cau hoi dua tren tai lieu (RAG hybrid). Backend: FastAPI (`api.py`).
 
-Luong xu ly: cau hoi -> chuan hoa -> guard dau vao -> small talk router (chao hoi tra loi co dinh, khong di tiep) -> BGE-M3 (`FlagEmbedding`, dense + sparse trong 1 lan encode) -> Qdrant hybrid search (prefetch dense + sparse, hop nhat RRF, loc payload) -> top 20 -> `jina-reranker-v3.5` (listwise, nap qua transformers) -> top 5 doan -> quet doan trich (bo doan chua chi dan chen vao) -> prompt co rao -> Groq Qwen -> guard dau ra -> cau tra loi co trich dan.
+Luong xu ly: cau hoi -> chuan hoa -> (SESSION_ENABLED) mo session: lich su + khoa/kho -> (ROUTER_ENABLED) router Gemini tu suy luan y dinh: chao hoi / tan cong / ngoai pham vi / thieu thong tin tra loi co dinh va dung o day, con lai duoc viet lai thanh cau tim kiem doc lap -> BGE-M3 (`FlagEmbedding`, dense + sparse trong 1 lan encode) -> Qdrant hybrid search (loc payload ngay trong tung nhanh tim vector; prefetch dense + sparse, hop nhat RRF; mac dinh (`QUERY_REWRITE_ENABLED=true`) Qwen viet lai cau tim kiem, dense + sparse tim cho ca hai cau va RRF mot lan tren moi danh sach) -> top 20 -> `jina-reranker-v3.5` (listwise, nap qua transformers) -> top 5 doan -> prompt co rao (doan trich + lich su + cau hoi goc) -> Groq Qwen -> guard dau ra -> luu luot vao session -> cau tra loi co trich dan. Khong con luat tu khoa nao phan loai cau hoi: router tat hoac loi thi cau hoi di thang vao RAG.
 
 ## Chay local
 
@@ -18,7 +18,7 @@ uvicorn api:app --reload --port 8000
 
 CLI: `python query_model.py [--mode dense|hybrid|hybrid_rerank] [--kho KHO] [--date YYYY-MM-DD] "cau hoi"`.
 
-Cau hinh tap trung o `config.py`. Chi **bon** bien doc tu moi truong (`.env` cua ai-service, `environment` cua docker-compose, `ENV` cua Dockerfile): `GROQ_API_KEY`, `GROQ_QWEN_MODEL`, `QDRANT_URL`, `GROQ_CACHE_DIR`. Moi gia tri khac la hang so trong `config.py` (ten trong bang la ten hang so; bool ghi `1`/`0` la `True`/`False`): sua o do roi `docker-compose up -d --build ai-service`.
+Cau hinh tap trung o `config.py`. Bon bien cu doc tu moi truong (`.env` cua ai-service, `environment` cua docker-compose, `ENV` cua Dockerfile): `GROQ_API_KEY`, `GROQ_QWEN_MODEL`, `QDRANT_URL`, `GROQ_CACHE_DIR`; cong nhom router / session doc cung cach (`GEMINI_API_KEY`, `GEMINI_MODEL`, `ROUTER_*`, `SESSION_*`, bool ghi `true`/`false`). Moi gia tri khac la hang so trong `config.py` (ten trong bang la ten hang so; bool ghi `1`/`0` la `True`/`False`): sua o do roi `docker-compose up -d --build ai-service`.
 
 | Bien | Mac dinh | Y nghia |
 |---|---|---|
@@ -27,6 +27,7 @@ Cau hinh tap trung o `config.py`. Chi **bon** bien doc tu moi truong (`.env` cua
 | `GROQ_REASONING_EFFORT` | `none` | Tat reasoning cua Qwen; de trong = khong gui tham so |
 | `GROQ_RPM` / `GROQ_TPM` | `30` / `8000` | Gioi han toc do phia client |
 | `GROQ_MAX_RETRIES` | `5` | So lan thu lai khi 429/timeout (backoff mu, ton trong `Retry-After`) |
+| `QUERY_REWRITE_ENABLED` | `true` | Qwen viet lai cau tim kiem; dense + sparse tim cho ca hai cau, RRF mot lan tren moi danh sach (gop trung theo id) truoc khi rerank (chi `hybrid` / `hybrid_rerank`). Them mot lan goi Groq moi cau hoi RAG; loi thi tim mot cau nhu cu. Dat `false` de tat |
 | `GROQ_CACHE` / `GROQ_CACHE_DIR` | `1` / `.groq_cache` | Cache dia theo hash (model, prompt) |
 | `WARMUP` | `1` | Nap BGE-M3 + reranker ngay khi server khoi dong (thread nen) thay vi o cau hoi dau tien. `0` de tat (vd khi dev can `--reload` nhanh) |
 | `RAG_MODE` | `hybrid_rerank` | `dense` / `hybrid` / `hybrid_rerank` |
@@ -38,20 +39,30 @@ Cau hinh tap trung o `config.py`. Chi **bon** bien doc tu moi truong (`.env` cua
 | `RERANK_CPU_ON_OOM` | `0` | CUDA OOM ngay ca khi cham 1 doan/lan thi chuyen reranker sang CPU |
 | `EMBED_BATCH_SIZE` / `EMBED_MAX_LENGTH` | `16` / `512` | Tu dong giam batch khi OOM |
 | `RERANK_BATCH_SIZE` / `RERANK_MAX_LENGTH` | `64` / `512` | So doan cham chung trong 1 prompt (chia doi khi OOM) / so token toi da moi doan |
-| `RERANK_MIN_SCORE` | `0.1` | Diem rerank (cosine, -1..1) toi thieu cua mot doan (mode `hybrid_rerank`); `-1` de tat |
+| `RERANK_MIN_SCORE` | `0.0` | Diem rerank (cosine, -1..1) toi thieu cua mot doan (mode `hybrid_rerank`); `-1` de tat |
 | `SCORE_THRESHOLD` | `0.5` | Cosine toi thieu (chi mode `dense`) |
 | `HNSW_EF` | `128` | efSearch cua nhanh dense |
-| `HYBRID_LEGS` | `dense,sparse` | Cac nhanh cua mode `hybrid` / `hybrid_rerank`, lay tu `dense`, `sparse`, `bm25` (phan cach bang dau phay). `bm25` can collection co vector `bm25` (chay `scripts/migrate_add_bm25.py`), thieu thi server khong khoi dong. Mode `dense` khong doi |
-| `BM25_TOKENIZER` | `syllable_bigram` | `syllable`, `syllable_bigram` hoac `pyvi`. Phai giong luc index |
-| `BM25_K1` / `BM25_B` | `1.2` / `0.75` | Tham so BM25. Phai giong luc index |
-| `BM25_AVG_LEN` | `120.0` (gia tri tam) | So token BM25 trung binh moi chunk; dung gia tri `scripts/migrate_add_bm25.py` do va in ra. Phai giong luc index |
+| `HYBRID_LEGS` | `dense,sparse` | Cac nhanh cua mode `hybrid` / `hybrid_rerank`, lay tu `dense`, `sparse` (phan cach bang dau phay). Ten khac thi truy van bao `ValueError`. Mode `dense` khong doi |
 | `PAYLOAD_FIELD_LOAI_VAN_BAN` | `loai_van_ban` | Ten field payload dung de loc theo `loai_van_ban` |
 | `PAYLOAD_FIELD_KHO`, `..._DOI_TUONG`, `..._HIEU_LUC_TU`, `..._HIEU_LUC_DEN` | `kho`, `doi_tuong`, `hieu_luc_tu`, `hieu_luc_den` | Ten field payload dung de index/loc |
-| `GUARD_ENABLED` | `1` | `0` tat guard + small talk: hanh vi y het truoc khi co guard (chi them truong `intent` = `rag`) |
-| `GUARD_MODE` | `enforce` | `log_only` chi ghi log (khong chan cau hoi, khong bo doan, khong chan dau ra, khong sua cau hoi) de do false positive; small talk van tra loi co dinh |
+| `GUARD_ENABLED` | `1` | `0` tat chuan hoa cau hoi, prompt co rao + canary va guard dau ra (prompt cu, khong co lich su trong prompt tra loi) |
+| `GUARD_MODE` | `enforce` | `log_only`: guard dau ra chi ghi log, khong chan |
 | `GUARD_MAX_QUESTION_CHARS` | `1000` | Cau hoi dai hon bi cat (sau khi chuan hoa) |
 | `GUARD_CANARY` | (de trong) | De trong = suy ra tu noi dung system prompt, on dinh giua cac lan chay nen cache dia Groq van trung |
-| `GUARD_REFUSAL_ANSWER`, `GUARD_REPLY_GREETING` / `_CAPABILITY` / `_META` / `_THANKS` / `_GOODBYE` | xem `config.py` | Cau tra loi co dinh |
+| `GUARD_REFUSAL_ANSWER`, `GUARD_REPLY_GREETING` / `_CAPABILITY` / `_META` / `_THANKS` / `_GOODBYE`, `OFF_TOPIC_ANSWER`, `CLARIFY_ANSWER_TOPIC` / `_AUDIENCE` / `_TIME` | xem `config.py` | Cau tra loi co dinh (moi chu hien ra cho nguoi dung deu lay tu day, khong bao gio tu chuoi do router sinh ra) |
+| `ROUTER_ENABLED` | `false` | Bat router Gemini (goi thang REST `generateContent` bang httpx). Tat: moi cau hoi vao thang RAG |
+| `GEMINI_API_KEY` | (bat buoc khi bat router) | Gui o header `x-goog-api-key`; khong bao gio log, khong nam trong image |
+| `GEMINI_MODEL` (hang so `ROUTER_MODEL`) | (bat buoc khi bat router) | Id model Gemini, vi du `gemini-3.5-flash-lite` (stable; khong dung ban `*-preview`). Tien to `gemini/` kieu cu van duoc chap nhan va bi bo |
+| `ROUTER_TIMEOUT_S` / `ROUTER_MAX_RETRIES` | `10` / `1` | Timeout moi lan goi / so lan thu lai (timeout, mat ket noi, 5xx; 429 va 4xx khac khong thu lai). Do thuc te 1-9 s moi lan goi (p95 ~8.8 s); xau nhat truoc khi roi vao RAG la (1 + retry) x timeout = 20 s |
+| `ROUTER_RPM` | `15` | Gioi han trong tien trinh; het ngan sach thi request vao thang RAG. Google khong cong bo RPM free tier (xem trong AI Studio) |
+| `ROUTER_MIN_CONFIDENCE` / `ROUTER_BLOCK_CONFIDENCE` / `ROUTER_OFFTOPIC_CONFIDENCE` / `ROUTER_CLARIFY_CONFIDENCE` | `0.5` / `0.7` / `0.8` / `0.7` | Quyet dinh duoi nguong thi coi la `rag` |
+| `ROUTER_CLARIFY_ENABLED` | `true` | `false`: `clarify` luon thanh `rag` (do ablation) |
+| `ROUTER_HISTORY_TURNS` | `3` | So luot lich su gui cho router |
+| `ROUTER_REASONING_EFFORT` | `low` | Khong dat `none` voi gemini-3.5-flash-lite: `standalone_query` lap vo han |
+| `SESSION_ENABLED` | `false` | Bat session. Tat: bo qua `session_id` / `reset`, khong co `session_id` trong response |
+| `SESSION_STORE` / `SESSION_DB_URI` | `memory` / (rong) | `memory`: SQLite trong RAM (mat khi restart). `sqlite`: file `sqlite+aiosqlite:///...`, can volume |
+| `SESSION_TTL_S` / `SESSION_MAX_SESSIONS` | `1800` / `200` | Het han (tu luot luu cuoi) hoac vuot so session thi xoa (LRU) |
+| `SESSION_MAX_TURNS` / `SESSION_MAX_HISTORY_TOKENS` | `6` / `1500` | Cua so lich su dua vao prompt: lay cai nho hon |
 
 Base URL mac dinh: `http://localhost:8000`
 
@@ -60,10 +71,10 @@ Base URL mac dinh: `http://localhost:8000`
 | `mode` | Truy van Qdrant | Rerank |
 |---|---|---|
 | `dense` | chi vector `dense` (cosine) | khong |
-| `hybrid` | prefetch cac nhanh trong `HYBRID_LEGS` (mac dinh `dense` + `sparse`, them `bm25` neu bat; moi nhanh 20), hop nhat RRF o phia Qdrant | khong |
-| `hybrid_rerank` | nhu `hybrid` | `jina-reranker-v3.5`, giu 5 doan |
+| `hybrid` | prefetch cac nhanh trong `HYBRID_LEGS` (`dense` + `sparse`; moi nhanh 20), hop nhat RRF o phia Qdrant | khong |
+| `hybrid_rerank` | nhu `hybrid` | `jina-reranker-v3.5`, giu 5 doan (cham theo cau goc ke ca khi bat `QUERY_REWRITE_ENABLED`) |
 
-Moi nhanh la mot `Prefetch` trong cung mot request toi Qdrant va **cung mang mot bo loc** (`kho`, hieu luc, `khoa`, `loai_van_ban`). Nhanh `dense`/`sparse` la vector BGE-M3 (GPU); `bm25` la nhanh tu khoa tieng Viet (CPU, giu dau, them cap am tiet nhu `hoc_bong`, `dieu_15`), IDF do Qdrant tinh.
+Moi nhanh la mot `Prefetch` trong cung mot request toi Qdrant va **cung mang mot bo loc** (`kho`, hieu luc, `khoa`, `loai_van_ban`). Bo loc nam o tung nhanh tim vector nen Qdrant ap no ngay trong luc tim, khong loc sau khi da lay top-k. Nhanh `dense`/`sparse` la vector BGE-M3 (GPU, mot lan encode cho ca hai). Khi bat `QUERY_REWRITE_ENABLED`, cau viet lai them hai nhanh nua (cung bo loc) va tat ca cac danh sach vao MOT lan RRF; chunk nam trong nhieu danh sach chi xuat hien mot lan.
 
 Nhanh nao khong co token (vd cau hoi chi co dau cau) thi bi bo; khong con nhanh nao thi dung `dense`. Chi con mot nhanh thi truy van thang nhanh do, khi do `score` la diem cua nhanh chu khong phai diem RRF.
 
@@ -97,7 +108,9 @@ Gui cau hoi, nhan cau tra loi cua LLM kem nguon trich dan.
   "top_k": 5,
   "kho": "Khoa A",
   "reference_date": "2026-01-31",
-  "loai_van_ban": ["thong_bao", "quy_che"]
+  "loai_van_ban": ["thong_bao", "quy_che"],
+  "session_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+  "reset": false
 }
 ```
 
@@ -109,6 +122,10 @@ Gui cau hoi, nhan cau tra loi cua LLM kem nguon trich dan.
 | `kho` | string | khong | - | Chi tim trong kho nay |
 | `reference_date` | date | khong | hom nay | Chi lay van ban con hieu luc tai ngay nay |
 | `loai_van_ban` | string[] | khong | - | Chi tim trong cac loai van ban nay: `quy_che`, `quy_dinh`, `thong_bao`, `bieu_mau`, `huong_dan`, `khac` (chunker suy ra tu ten tai lieu). Bo trong hoac `[]` = khong loc; gia tri khong ton tai thi khong co doan nao (`in_scope=false`) |
+| `session_id` | string (UUID) | khong | server tao UUID v4 | Chi co tac dung khi `SESSION_ENABLED`. Khong phai UUID -> `400`. Phai gui lai gia tri server tra ve de cac cau hoi lien tuc dung chung lich su; id chua tung thay (het han, server restart voi `memory`) la session moi |
+| `reset` | bool | khong | `false` | Xoa lich su session truoc khi xu ly request nay (khong can route `DELETE` moi) |
+
+Server khong bao gio nhan lich su tu client: moi truong khac ngoai bang tren (ke ca `history`) bi bo qua.
 
 Loc theo ngay: van ban hop le khi `hieu_luc_tu <= reference_date <= hieu_luc_den`; thieu `hieu_luc_tu` / `hieu_luc_den` (hoac `null`) coi nhu khong gioi han o phia do. Payload hien tai chi co `source` va `text` nen cac bo loc nay chua loai doan nao cho den khi bo chunking ghi them `kho`, `doi_tuong`, `hieu_luc_tu`, `hieu_luc_den`.
 
@@ -165,18 +182,20 @@ Prompt yeu cau chi tra loi tu cac doan duoc cung cap, trich dan ten van ban va D
 | Field | Type | Ghi chu |
 |---|---|---|
 | `in_scope` | bool | `false` khi khong con doan nao sau loc payload / nguong tuong dong, hoac cau hoi / cau tra loi bi guard chan. `true` voi cau tra loi RAG va voi tra loi co dinh (chao hoi) |
-| `intent` | string | **Tuy chon, them moi**; client cu bo qua duoc. `rag` (di qua pipeline, ke ca khi `in_scope=false` vi khong co doan phu hop), `greeting`, `thanks`, `goodbye`, `capability` (hoi cong dung / ban la ai), `meta` (hoi ve model, prompt, cau hinh: tra loi co dinh, khong tiet lo), `blocked` (guard chan cau hoi hoac chan cau tra loi lo prompt / bi mat). Cac intent khac `rag` khong bao gio co `sources` |
+| `intent` | string | **Tuy chon, them moi**; client cu bo qua duoc. `rag` (di qua pipeline, ke ca khi `in_scope=false` vi khong co doan phu hop), `greeting`, `thanks`, `goodbye`, `capability` (hoi cong dung / ban la ai), `meta` (hoi ve model, prompt, cau hinh: tra loi co dinh, khong tiet lo), `blocked` (router danh dau tan cong / injection, hoac guard dau ra chan cau tra loi lo prompt / bi mat), `off_topic` (ngoai pham vi quy dinh cua truong; `in_scope=false`), `clarify` (thieu chu de / doi tuong / thoi diem, tra mot cau hoi lai co dinh; `in_scope=true`). Cac intent khac `rag` khong bao gio co `sources` |
+| `session_id` | string | Chi co khi `SESSION_ENABLED`: UUID cua session (do client gui hoac server tao). Khi tat session thi khoa nay khong xuat hien |
 | `sources[].score` | float | Diem rerank neu co rerank; khong thi diem truy van (cosine o `dense`, diem RRF o `hybrid` nhieu nhanh, diem cua nhanh neu chi con mot nhanh) |
 | `sources[].rerank_score` | float / null | Diem cosine (-1..1) cua reranker, co the **am**; chi so sanh duoc giua cac doan cung mot lan hoi. `null` khi khong rerank |
 | `sources[].payload` | object | Toan bo payload cua doan (dung de trich dan) |
 
-Nguong tuong dong: `dense` dung cosine `SCORE_THRESHOLD`; `hybrid_rerank` dung `RERANK_MIN_SCORE` (mac dinh `0.1`, moi doan duoi nguong bi bo, nen LLM co the nhan it hon 5 doan); `hybrid` khong co nguong (diem RRF khong phai cosine). Nguong `0.1` do tren 22 cau hoi cua `quy_che.pdf`: doan dung >= 0.27, cau lac de <= 0.08; cau "gan chu de" nhung khong co dap an (vd hoi hoc bong cua truong khac) cho 0.17-0.23, van toi LLM va prompt se tu choi.
+Nguong tuong dong: `dense` dung cosine `SCORE_THRESHOLD`; `hybrid_rerank` dung `RERANK_MIN_SCORE` (mac dinh `0.0`, moi doan duoi nguong bi bo, nen LLM co the nhan it hon 5 doan); `hybrid` khong co nguong (diem RRF khong phai cosine). Nguong `0.0` do lai tren kho hien tai (1297 chunk, 77 van ban): cau hoi ngan nhu "Hoc phi bao nhieu?" bi reranker cham diem thap (doan dung chi 0.01-0.06) nen nguong `0.1` cu cat con 0-1 doan va LLM tra "Cac doan trich duoc cung cap khong chua thong tin..."; cau lac de cao nhat -0.032 nen van bi chan. Cau "gan chu de" nhung khong co dap an van toi LLM va prompt se tu choi.
 
 **Loi**
 
 | Status | Khi nao | Body |
 |---|---|---|
 | `400` | `question` rong (ke ca chi gom ky tu zero width / dieu khien) | `{ "detail": "question khong duoc de trong" }` |
+| `400` | `session_id` khong phai UUID (chi khi `SESSION_ENABLED`) | `{ "detail": "session_id phai la UUID" }` |
 | `422` | `mode` khong hop le | chi tiet validation |
 | `500` | Server thieu bien moi truong (`.env`) | `{ "detail": "Thieu bien moi truong: ..." }` |
 | `502` | Qdrant loi, hoac Groq that bai sau khi het so lan thu lai (429/timeout) | `{ "detail": "Loi khi truy van Qdrant/goi LLM: ..." }` |
@@ -188,7 +207,7 @@ Nhu `/ask` (cung request body) nhung tra cau tra loi dang **Server-Sent Events**
 Moi su kien la mot dong `data: <JSON>` ket thuc bang dong trong, theo thu tu:
 
 ```
-data: {"event": "sources", "in_scope": true, "sources": [{"source": "quy_che.pdf", "text": "...", "score": 0.6004, "rerank_score": 0.6004, "payload": {...}}]}
+data: {"event": "sources", "in_scope": true, "sources": [{"source": "quy_che.pdf", "text": "...", "score": 0.6004, "rerank_score": 0.6004, "payload": {...}}], "session_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff"}
 
 data: {"event": "delta", "text": "Thí sinh "}
 
@@ -204,12 +223,25 @@ data: [DONE]
 | `error` | 0-1 | `detail`: loi khi dang sinh cau tra loi. Stream dong ngay sau do, **khong** co `[DONE]`. Guard dau ra phat hien canary / lo system prompt / bi mat giua chung thi `detail` la cau tu choi (`GUARD_REFUSAL_ANSWER`); cac `delta` da gui truoc do (khong chua du mau lo) khong thu hoi duoc |
 | `[DONE]` | 1, cuoi cung | Cau tra loi da xong |
 
-- Tra loi co dinh (chao hoi) va cau hoi bi chan van theo dung hop dong tren: `sources` voi danh sach rong (`in_scope=true` cho chao hoi, `false` cho cau bi chan), dung 1 `delta`, roi `[DONE]`. Su kien `sources` cua chung co them khoa `intent` (`greeting`, `thanks`, `goodbye`, `capability`, `meta`, `blocked`); su kien `sources` cua cau hoi RAG **khong** co khoa nay (giu nguyen nhu truoc).
+- Tra loi co dinh (chao hoi, cau bi chan, `off_topic`, `clarify`) van theo dung hop dong tren: `sources` voi danh sach rong (`in_scope=true` cho chao hoi va `clarify`, `false` cho cau bi chan va `off_topic`), dung 1 `delta`, roi `[DONE]`. Su kien `sources` cua chung co them khoa `intent` (`greeting`, `thanks`, `goodbye`, `capability`, `meta`, `blocked`, `off_topic`, `clarify`); su kien `sources` cua cau hoi RAG **khong** co khoa nay.
+- Khi `SESSION_ENABLED`, su kien `sources` co them khoa `session_id`. Luot hoi dap chi duoc luu sau delta cuoi (truoc `[DONE]`); stream loi (`error`) thi khong luu gi. Khoa session duoc giu den het stream: request thu hai cung session cho request dau xong.
 - Truy van Qdrant + rerank chay **truoc** khi gui header, nen loi o buoc nay van tra ma HTTP `400/422/500/502` voi body JSON nhu `/ask`. Sau khi da nhan `200`, loi chi bao bang su kien `error`.
 - Stream ket thuc ma khong co `[DONE]` (va khong co `error`) = mat ket noi giua chung, FE nen coi la loi.
 - Groq 429/timeout truoc token dau tien van duoc thu lai nhu `/ask` (client cho lau hon, chua nhan `delta` nao). Loi sau khi da gui token thi khong thu lai, gui `error`.
 - Cau tra loi day du duoc ghi vao cache dia nhu `/ask`; cau hoi lap lai tra ve trong 1 `delta` duy nhat.
 - Khoi `<think>...</think>` (neu bat reasoning) duoc loc ngay trong stream.
+
+## Router Gemini va session
+
+**Router** (`ROUTER_ENABLED=true`). Mot lan goi Gemini (REST `generateContent`, structured output) phan loai cau hoi, khong co danh sach tu khoa nao: `rag`, `off_topic`, `clarify`, `greeting`, `thanks`, `goodbye`, `capability`, `meta`, `injection`. Chinh sach (theo thu tu): `injection` >= 0.7 -> tu choi (`intent=blocked`, khong luu); `off_topic` >= 0.8 -> `OFF_TOPIC_ANSWER` (khong luu); `clarify` >= 0.7 -> mot cau hoi lai co dinh theo `missing` (`topic` / `audience` / `time`, co luu), khong hoi hai lan lien tiep va bo qua `audience` khi `khoa` da biet; chao hoi / cam on / tam biet / capability / meta >= 0.5 -> cau co dinh; con lai (ke ca duoi nguong) -> RAG. Voi RAG, `standalone_query` (cau tim kiem doc lap, vd "con hoc ky dau tien thi sao?" -> "Sinh vien duoc dang ky toi da bao nhieu tin chi trong hoc ky dau tien?") thay cau hoi cho encode / Qdrant / rerank; prompt tra loi van mang cau hoi goc. Gemini chi nhan cau hoi da chuan hoa, vai luot lich su cuoi, `khoa` / `kho` va co "luot truoc la clarify" (suy ra tu luot da luu, khong tu request); khong nhan doan trich, system prompt, bi mat hay dinh danh nguoi dung. Router tat hoac loi (timeout, quota, JSON hong, het `ROUTER_RPM`) thi cau hoi di thang vao RAG, request khong bao gio loi vi router.
+
+Luu y rieng tu: goi Gemini free tier cho phep Google dung noi dung de cai thien san pham; goi tra phi thi khong.
+
+**Session** (`SESSION_ENABLED=true`). Moi `session_id` giu lich su ngan han cua cuoc tro chuyen de hieu cau follow up. Server lay `session_id` tu body (hoac tao moi va tra lai trong response / su kien `sources`); FE can luu va gui lai gia tri nay o cac cau tiep theo (FE hien tai chua lam). `khoa` va `kho` hop le cua cac request truoc duoc nho trong session va dung lam bo loc khi request sau khong gui; gia tri trong request luon de len gia tri da luu; `reference_date` khong bao gio duoc luu. Cac luot `rag`, `clarify` va small talk duoc luu sau khi tra loi xong; `injection`, `off_topic`, cau bi guard dau ra chan va stream loi khong duoc luu. Het han sau `SESSION_TTL_S` (mac dinh 30 phut tu luot cuoi) hoac khi qua `SESSION_MAX_SESSIONS`. Mac dinh lich su nam trong RAM va mat khi restart; `SESSION_STORE=sqlite` luu file va con sau khi restart. Session khong luu vinh vien: het han, bi LRU loai hoac `reset` deu xoa, va chi giu `SESSION_MAX_TURNS` luot gan nhat. Khong mo duoc session store thi request van duoc tra loi, chi khong co lich su.
+
+**Bao mat session.** Neu gateway gui header `X-User-Id` (api-gateway lam viec nay sau khi xac thuc JWT) thi khoa luu tru la `user:session_id`, nen biet UUID cua nguoi khac cung khong doc duoc lich su. Neu khong co header, `session_id` la bi mat mang theo nguoi dung (bearer): ai biet UUID thi doc/ghi duoc session do. Cong `8001` cua ai-service mo ra may host, goi thang vao do thi client tu dat duoc `X-User-Id`; chi tin header khi ai-service khong public.
+
+**Tat session.** `SESSION_ENABLED=false`: `session_id` / `reset` bi bo qua, `clarify` van chay nhung khong thay luot truoc nen cau tra loi cho cau hoi lai phai la mot cau hoi day du, va khong co chan "hoi hai lan lien tiep".
 
 ## Vi du goi tu FE
 

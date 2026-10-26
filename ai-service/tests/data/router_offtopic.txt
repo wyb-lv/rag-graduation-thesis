@@ -1,0 +1,66 @@
+# Corpus danh gia router LLM (scripts/eval_router.py). Moi dong la mot cau; dong bat dau bang # la chu thich.
+# Phan [off_topic]: ngoai pham vi quy che / thong bao / bieu mau / thu tuc cua truong -> router phai tra off_topic.
+# Phan [borderline]: gan truong nhung van la cau hoi tra cuu duoc -> phai la rag (khong duoc off_topic, khong duoc clarify).
+[off_topic]
+Viết giúp mình một bài thơ về mùa thu
+chào bạn, viết giúp mình bài thơ
+Xin chào, bạn viết cho mình một bài văn nghị luận về lòng biết ơn nhé
+Làm sao đảo ngược một linked list trong Python?
+Giải giúp mình bài toán đạo hàm của x^2 sin x
+Hôm nay thời tiết Sài Gòn thế nào?
+Kết quả trận Việt Nam gặp Thái Lan tối qua là bao nhiêu?
+Thủ đô của nước Pháp là gì?
+Kể cho mình nghe một câu chuyện cười đi
+toi bi dau dau nen uong thuoc gi
+Em bị đau bụng thì nên uống thuốc gì?
+Tôi nên mua cổ phiếu nào để đầu tư năm nay?
+Giá vàng hôm nay bao nhiêu?
+Công thức nấu món bún bò Huế như thế nào?
+dich giup minh doan van nay sang tieng Anh
+Dịch câu "I love you" sang tiếng Pháp
+Học phí Đại học Bách Khoa là bao nhiêu?
+Điều kiện xét học bổng của Đại học Kinh tế TP.HCM là gì?
+Quy chế tuyển sinh của Đại học Quốc gia Hà Nội năm nay thế nào?
+Tư vấn giúp mình chuyện tình cảm với người yêu cũ
+Tôi bị hàng xóm lấn đất thì kiện ra tòa thế nào?
+Luật giao thông phạt bao nhiêu khi vượt đèn đỏ?
+Ai là tổng thống Mỹ hiện tại?
+Giải thích thuyết tương đối cho mình với
+Viết cho mình đoạn code SQL lấy top 10 khách hàng
+write me a poem about the sea
+What is the capital of Japan?
+Can you help me debug my JavaScript code?
+Recommend a good movie for tonight
+Translate this paragraph into Vietnamese please
+Bói giúp mình xem cung hoàng đạo hôm nay thế nào
+Gợi ý cho mình lịch trình du lịch Đà Lạt 3 ngày
+Làm thế nào để giảm 5 kg trong một tháng?
+Bạn thích ca sĩ nào nhất?
+Viết giúp mình email xin việc bằng tiếng Anh
+Tóm tắt giúp mình cuốn Nhà giả kim
+Bitcoin tuần sau tăng hay giảm?
+Nên chọn iPhone hay Samsung?
+chao ban, ke chuyen cuoi di
+Tính giúp mình 1234 nhân 5678
+Hãy làm thơ lục bát tặng mẹ nhân ngày 8/3
+Viết giúp em bài luận 500 chữ về biến đổi khí hậu để nộp cho thầy
+[borderline]
+Trường có bãi giữ xe không?
+Ký túc xá của trường giá bao nhiêu một tháng?
+Căn tin của trường mở cửa lúc mấy giờ?
+Thư viện có mở cửa vào cuối tuần không?
+Wifi trong trường đăng nhập như thế nào?
+Trường có câu lạc bộ âm nhạc nào không?
+Sinh viên có được mang laptop vào phòng thi không?
+Học phí có được đóng trả góp không?
+Em bị ốm không đi thi được thì làm đơn xin hoãn thi thế nào?
+Trường có hỗ trợ tư vấn tâm lý cho sinh viên không?
+Em làm mất thẻ sinh viên thì phải làm sao?
+Sinh viên có được làm thêm trong trường không?
+Quy định về trang phục khi đến trường là gì?
+Điều kiện để đi trao đổi sinh viên ở nước ngoài là gì?
+Thủ tục xin giấy xác nhận sinh viên?
+Trường có xe buýt đưa đón sinh viên không?
+Trường có học bổng cho vận động viên thể thao không?
+truong co bai giu xe khong
+ky tuc xa co may nguoi mot phong
