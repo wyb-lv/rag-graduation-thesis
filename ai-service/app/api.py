@@ -41,8 +41,19 @@ from .rag import query_model as qm
 from .router import guard, router_llm
 from .router.router_llm import Action
 from .router.small_talk import Intent
+from .speech import stt, tts
 
 log = logging.getLogger("uvicorn.error")
+
+
+class _SuppressH2CUpgradeWarning(logging.Filter):
+    """Ẩn cảnh báo vô hại 'Unsupported upgrade request.' khi api-gateway gửi header Upgrade: h2c."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Unsupported upgrade request" not in record.getMessage()
+
+
+log.addFilter(_SuppressH2CUpgradeWarning())
 _warmup = {"status": "disabled" if not cfg.WARMUP else "pending"}
 
 WARMUP_TEXT = "Thí sinh được đăng ký tối đa bao nhiêu nguyện vọng?"
@@ -405,10 +416,10 @@ def _read_and_validate_audio(file: UploadFile) -> tuple[bytes, str]:
     filename = file.filename or "audio.wav"
     content = file.file.read(cfg.MAX_AUDIO_BYTES + 1)
     try:
-        speech.validate_audio_bytes(content, filename=filename)
-    except speech.AudioTooLargeError as e:
+        stt.validate_audio_bytes(content, filename=filename)
+    except stt.AudioTooLargeError as e:
         raise HTTPException(status_code=413, detail=str(e))
-    except speech.UnsupportedAudioFormatError as e:
+    except stt.UnsupportedAudioFormatError as e:
         raise HTTPException(status_code=415, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -425,7 +436,7 @@ def speech_to_text(
     """
     content, filename = _read_and_validate_audio(file)
     try:
-        return speech.transcribe_speech(content, filename=filename)
+        return stt.transcribe_speech(content, filename=filename)
     except HTTPException:
         raise
     except Exception as e:
@@ -443,17 +454,19 @@ def ask_voice_stream(
     mode: Literal["dense", "hybrid", "hybrid_rerank"] = Form(cfg.RAG_MODE),
     kho: Optional[str] = Form(None),
     reference_date: Optional[date] = Form(None),
+    khoa: Optional[int] = Form(None),
+    loai_van_ban: Optional[List[str]] = Form(None),
 ):
     """
     Luồng 1 (Upload File Âm thanh -> Hỏi trực tiếp):
       1. Kiểm tra bảo mật file âm thanh (<= 5MB, đúng định dạng audio).
-      2. Chuyển âm thanh thành văn bản qua `speech.transcribe_speech`.
+      2. Chuyển âm thanh thành văn bản qua `stt.transcribe_speech`.
       3. Đưa thẳng văn bản câu hỏi vào pipeline RAG (`find_hits` + `generate_answer_stream`).
       4. Trả về luồng SSE gồm: `transcription` -> `sources` -> `delta` (nhiều lần) -> `[DONE]`.
     """
     content, filename = _read_and_validate_audio(file)
     try:
-        stt_result = speech.transcribe_speech(content, filename=filename)
+        stt_result = stt.transcribe_speech(content, filename=filename)
     except HTTPException:
         raise
     except Exception as e:
@@ -467,14 +480,19 @@ def ask_voice_stream(
             detail="Không nhận diện được giọng nói trong file âm thanh. Vui lòng chọn file có tiếng nói rõ ràng.",
         )
 
+    find_kwargs: Dict[str, Any] = {
+        "top_k": top_k,
+        "mode": mode,
+        "kho": kho,
+        "reference_date": reference_date,
+    }
+    if khoa is not None:
+        find_kwargs["khoa"] = khoa
+    if loai_van_ban is not None:
+        find_kwargs["loai_van_ban"] = loai_van_ban
+
     with _pipeline_errors():
-        hits = qm.find_hits(
-            question,
-            top_k=top_k,
-            mode=mode,
-            kho=kho,
-            reference_date=reference_date,
-        )
+        hits = qm.find_hits(question, **find_kwargs)
         chunks = qm.generate_answer_stream(question, hits) if hits else iter([qm.NO_RESULT_ANSWER])
     sources = [s.model_dump() for s in _sources(hits)]
 
@@ -501,27 +519,38 @@ def ask_voice_stream(
 
 @app.post("/tts", summary="Đọc nội dung câu trả lời của AI thành giọng nói Tiếng Việt (MP3 Stream)")
 async def text_to_speech(payload: TTSRequest):
-    """
-    Luồng 3: Chuẩn hóa các ký hiệu viết tắt học vụ HSU (QĐ-ĐHHS, HSU, SV, >= 2.5/4.0...)
-    và stream trực tiếp dữ liệu MP3 về cho trình duyệt phát.
-    """
     raw_text = (payload.text or "").strip()
     if not raw_text:
         raise HTTPException(status_code=400, detail="Văn bản cần đọc không được để trống.")
-
     try:
-        processed_text = speech.normalize_academic_text(raw_text)
-        if not processed_text:
-            raise HTTPException(status_code=400, detail="Văn bản sau chuẩn hóa rỗng.")
+        processed_text = tts.normalize_academic_text(raw_text)
 
-        mp3_bytes = await speech.synthesize_speech_bytes(
-            text=processed_text,
-            voice=payload.voice or cfg.TTS_VOICE,
-        )
-        return Response(
-            content=mp3_bytes,
+        # BẢO VỆ: Nếu sau khi chuẩn hóa chỉ còn dấu câu/khoảng trắng, không đọc và trả về 204
+        if not tts.is_speakable_text(processed_text):
+            return Response(content=b"", status_code=204)
+
+        voice = payload.voice or cfg.TTS_VOICE
+        chunk_iter = tts.stream_speech_chunks(text=processed_text, voice=voice).__aiter__()
+        first_chunk = b""
+        async for chunk in chunk_iter:
+            if chunk:
+                first_chunk = chunk
+                break
+
+        # Nếu vì lý do mạng mà không có byte âm thanh nào, trả về 204 thay vì 500 để không chặn UI
+        if not first_chunk:
+            return Response(content=b"", status_code=204)
+
+        async def audio_stream():
+            yield first_chunk
+            async for chunk in chunk_iter:
+                if chunk:
+                    yield chunk
+
+        return StreamingResponse(
+            audio_stream(),
             media_type="audio/mpeg",
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
     except HTTPException:
         raise

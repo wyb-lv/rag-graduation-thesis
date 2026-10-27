@@ -227,6 +227,7 @@ export async function synthesizeSpeech(text: string, signal?: AbortSignal): Prom
     signal,
   })
 
+  if (res.status === 204) throw new Error('Không có nội dung văn bản để đọc.')
   await assertOk(res, 'Lỗi tổng hợp giọng nói')
   return res.blob()
 }

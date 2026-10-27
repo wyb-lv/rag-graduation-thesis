@@ -55,9 +55,17 @@ export async function registerApi(
 }
 
 /** Khóa của sinh viên (vd 2024), gửi kèm câu hỏi để chỉ lấy quy định áp dụng cho khóa đó. */
+/** Khóa của sinh viên (vd 2024), gửi kèm câu hỏi để chỉ lấy quy định áp dụng cho khóa đó. */
 export function getKhoa(): number | undefined {
-  const n = Number(localStorage.getItem('khoa'))
-  return Number.isInteger(n) && n > 0 ? n : undefined
+  const raw = localStorage.getItem('khoa')
+  if (!raw) return undefined
+  let n = Number(raw)
+  if (!Number.isInteger(n)) return undefined
+  // Nếu sinh viên nhập 2 chữ số (vd: Khóa 21, 22, 24) -> tự quy đổi thành 2021, 2022, 2024
+  if (n >= 10 && n <= 99) {
+    n += 2000
+  }
+  return n >= 1990 && n <= 2100 ? n : undefined
 }
 
 // Nhiều request cùng hết hạn thì chỉ refresh một lần (refresh token dùng lại sẽ bị thu hồi toàn bộ phiên)

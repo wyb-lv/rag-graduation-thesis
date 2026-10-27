@@ -129,10 +129,13 @@ ai-service/
 │   │   └── jina_reranker_modeling.py  # Bản vendored của modeling Jina (khỏi trust_remote_code)
 │   ├── llm/
 │   │   └── groq_client.py        # Groq client: rate limit RPM/TPM, backoff, cache đĩa, ThinkFilter
-│   └── ingest/
-│       ├── chunker.py            # Làm sạch OCR + chia chunk theo Chương/Điều/khoản
-│       ├── embed_service.py      # Chunk → encode → upsert Qdrant; xóa vector theo document_id
-│       └── embed_consumer.py     # RabbitMQ consumer (thread nền, tự reconnect)
+│   ├── ingest/
+│   │   ├── chunker.py            # Làm sạch OCR + chia chunk theo Chương/Điều/khoản
+│   │   ├── embed_service.py      # Chunk → encode → upsert Qdrant; xóa vector theo document_id
+│   │   └── embed_consumer.py     # RabbitMQ consumer (thread nền, tự reconnect)
+│   └── speech/
+│       ├── stt.py                # STT: kiểm tra Magic Bytes, lọc khoảng lặng VAD, Groq Whisper & sửa lỗi đồng âm học vụ HSU
+│       └── tts.py                # TTS: chuẩn hóa văn bản HSU, tách câu, Prefetch Pipeline, Circuit Breaker & LRU Cache
 ├── scripts/
 │   ├── calibrate_rerank.py       # Hiệu chỉnh ngưỡng RERANK_MIN_SCORE
 │   └── eval_router.py            # Đánh giá router trên Gemini thật (tốn quota): recall tấn công, off_topic/clarify sai, độ trễ, số lần gọi

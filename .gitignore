@@ -28,6 +28,7 @@ uploads/
 *.log
 logs/
 HELP.md
+dev.sh
 
 # ── IDE / OS ──
 .idea/
