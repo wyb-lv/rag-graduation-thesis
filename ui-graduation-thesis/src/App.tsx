@@ -7,7 +7,7 @@ import { AuthScreen } from '@/components/auth/AuthScreen'
 import { OcrDemoView } from '@/components/ocr/OcrDemoView'
 
 function MainContent() {
-  const { token, activeView, messages, isLoading, sendMessage } = useChat()
+  const { token, activeView, messages, isLoading, sendMessage, sendVoiceMessage } = useChat()
 
   if (!token) {
     return <AuthScreen />
@@ -18,12 +18,12 @@ function MainContent() {
       {activeView === 'ocr' ? (
         <OcrDemoView />
       ) : messages.length === 0 ? (
-        <GreetingView onSend={sendMessage} disabled={isLoading} />
+        <GreetingView onSend={sendMessage} onSendVoice={sendVoiceMessage} disabled={isLoading} />
       ) : (
         <>
           <ChatArea messages={messages} isLoading={isLoading} />
           <footer className="w-full pb-3 pt-1 px-4 flex flex-col items-center flex-shrink-0">
-            <ChatInput onSend={sendMessage} position="bottom" disabled={isLoading} />
+            <ChatInput onSend={sendMessage} onSendVoice={sendVoiceMessage} position="bottom" disabled={isLoading} />
           </footer>
         </>
       )}

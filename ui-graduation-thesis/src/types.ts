@@ -25,6 +25,9 @@ export interface Message {
   content: string
   timestamp?: string
   sources?: SourceCitation[]
+  audioUrl?: string
+  audioDuration?: number
+  audioFileName?: string
 }
 
 export interface Conversation {

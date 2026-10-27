@@ -47,7 +47,7 @@ export function AssistantMessage({ message }: AssistantMessageProps) {
           </button>
         )}
       </div>
-      <MessageActions />
+      <MessageActions content={message.content} />
     </article>
   )
 }

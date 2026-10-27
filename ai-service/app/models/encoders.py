@@ -46,6 +46,14 @@ def _embedder_path():
     for name in ("sparse_linear.pt", "colbert_linear.pt"):
         if not os.path.exists(os.path.join(path, name)):
             raise FileNotFoundError(f"Thieu {name} trong {path}: dau sparse cua BGE-M3 se bi khoi tao ngau nhien")
+
+    # ── Tự động tạo model.safetensors nếu chỉ có pytorch_model.bin (Tránh CVE-2025-32434 check) ──
+    bin_file = os.path.join(path, "pytorch_model.bin")
+    st_file = os.path.join(path, "model.safetensors")
+    if os.path.exists(bin_file) and not os.path.exists(st_file):
+        from safetensors.torch import save_file
+        save_file(torch.load(bin_file, map_location="cpu"), st_file)
+
     return path
 
 

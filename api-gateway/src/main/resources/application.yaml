@@ -21,22 +21,15 @@ spring:
             predicates:
               - Path=/api/documents/**
 
-          # ── AI Service: hỏi đáp RAG ─────────────────────────────────────
-          # Route với prefix /api/ai/**
+          # ── AI Service: hỏi đáp RAG & Giọng nói ─────────────────────────
           - id: ai-service-ask
             uri: ${AI_SERVICE_URL:http://localhost:8000}
             predicates:
-              - Path=/api/ai/ask, /api/ai/ask/stream
+              - Path=/api/ai/health, /api/ai/ask, /api/ai/ask/stream, /api/ai/ask/voice/stream, /api/ai/stt, /api/ai/tts
             filters:
               - StripPrefix=2
-
-          - id: ai-service-health
-            uri: ${AI_SERVICE_URL:http://localhost:8000}
-            predicates:
-              - Path=/api/ai/health
-            filters:
-              - StripPrefix=2
-
+              - RemoveRequestHeader=Origin
+              
           # Embed: POST /api/ai/embed → ai-service POST /embed
           # Delete vectors: DELETE /api/ai/embed/{id} → ai-service DELETE /embed/{id}
           - id: ai-service-embed
@@ -45,6 +38,7 @@ spring:
               - Path=/api/ai/embed, /api/ai/embed/**
             filters:
               - StripPrefix=2
+              - RemoveRequestHeader=Origin
 server:
   port: ${SERVER_PORT:9090}
 
