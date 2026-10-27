@@ -3,9 +3,9 @@ from fastapi.testclient import TestClient
 
 import app.api as api
 import app.speech as speech
-import app.query_model as qm
+import app.rag.query_model as qm
 import app.config as cfg
-from tests.test_speech import make_wav_bytes
+from test_speech import make_wav_bytes  # tests/ khong phai package (pytest them no vao sys.path); `tests` tren sys.path co the la goi khac
 
 
 client = TestClient(api.app)

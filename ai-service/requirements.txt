@@ -15,6 +15,8 @@ pytest>=8
 # Embed consumer (RabbitMQ + HTTP client)
 pika>=1.3              # RabbitMQ client (embed_consumer.py) — cai optional, chi can khi dung RabbitMQ
 httpx>=0.27            # HTTP client lay van ban tu file-service (embed_consumer.py)
+# Session (app/session.py); router (app/router/router_llm.py) goi Gemini thang bang httpx o tren
+llama-index-core==0.14.25  # chi ban core (khong cai meta package llama-index): Memory cho session; keo theo aiosqlite, SQLAlchemy
 
 # Voice STT & TTS
 python-multipart>=0.0.9    # Bắt buộc để FastAPI nhận file upload (UploadFile) ở /stt

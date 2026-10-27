@@ -1,11 +1,21 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
-import type { Conversation, Message, User, SourceCitation } from '@/types'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import type { Conversation, Message, User, SourceCitation, ActiveView } from '@/types'
 import rawData from '@/data/conversations.json'
 import { askQuestionStream, askVoiceStream } from '@/services/conversationService'
 
 export type RightSidebarTab = 'hidden' | 'sources' | 'detail'
 
 interface ChatContextType {
+  // Navigation / View
+  activeView: ActiveView
+  setActiveView: (view: ActiveView) => void
+
+  // Auth
+  token: string | null
+  currentUser: string | null
+  loginSuccess: (token: string, username: string) => void
+  logout: () => void
+
   // Left Sidebar
   isLeftSidebarExpanded: boolean
   toggleLeftSidebar: () => void
@@ -35,9 +45,18 @@ interface ChatContextType {
   sendVoiceMessage: (file: File, durationSec: number) => Promise<void>
 }
 
+// Bản demo cũ từng lưu token giả; dọn đi để máy đó không vào được giao diện mà không đăng nhập
+if (localStorage.getItem('accessToken')?.startsWith('demo-jwt-token')) {
+  ;['accessToken', 'refreshToken', 'username', 'khoa'].forEach((k) => localStorage.removeItem(k))
+}
+
 const ChatContext = createContext<ChatContextType | null>(null)
 
 export function ChatProvider({ children }: { children: ReactNode }) {
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('accessToken'))
+  const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('username'))
+  const [activeView, setActiveView] = useState<ActiveView>('chat')
+
   const [isLeftSidebarExpanded, setIsLeftSidebarExpanded] = useState(false)
   const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>('hidden')
   const [selectedSourceIndex, setSelectedSourceIndex] = useState(0)
@@ -46,11 +65,42 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [activeId, setActiveId] = useState<string | null>('1')
   const [sources, setSources] = useState<SourceCitation[]>(rawData.sources as SourceCitation[])
   const [isLoading, setIsLoading] = useState(false)
+  // Mỗi hội thoại một session_id do server cấp ở câu hỏi đầu; gửi lại ở các câu sau để server nhớ ngữ cảnh
+  const sessionIds = useRef(new Map<string, string>())
 
   const activeConversation = conversations.find((c) => c.id === activeId)
   const [currentMessages, setCurrentMessages] = useState<Message[]>(activeConversation?.messages || [])
 
-  const user: User = rawData.user as User
+  const rawUser = rawData.user as User
+  const user: User = {
+    ...rawUser,
+    name: currentUser || rawUser.name,
+    initials: currentUser ? currentUser.slice(0, 2).toUpperCase() : rawUser.initials,
+  }
+
+  const loginSuccess = (newToken: string, newUsername: string) => {
+    localStorage.setItem('accessToken', newToken)
+    localStorage.setItem('username', newUsername)
+    setToken(newToken)
+    setCurrentUser(newUsername)
+    setActiveView('chat')
+  }
+
+  const logout = () => {
+    localStorage.removeItem('accessToken')
+    localStorage.removeItem('refreshToken')
+    localStorage.removeItem('username')
+    localStorage.removeItem('khoa')
+    setToken(null)
+    setCurrentUser(null)
+    setActiveView('chat')
+  }
+
+  // authFetch phát sự kiện này khi cả access lẫn refresh token đều không còn dùng được
+  useEffect(() => {
+    window.addEventListener('auth:expired', logout)
+    return () => window.removeEventListener('auth:expired', logout)
+  }, [])
 
   const toggleLeftSidebar = () => setIsLeftSidebarExpanded((prev) => !prev)
 
@@ -101,10 +151,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
       setConversations((prev) => [newConv, ...prev])
     }
+    const chatId = currentChatId
     let accumulatedContent = ''
     let latestSources: SourceCitation[] = []
     try {
       await askQuestionStream(content, {
+        onSession: (sessionId) => sessionIds.current.set(chatId, sessionId),
         onSources: (incomingSources) => {
           latestSources = incomingSources
           setSources(incomingSources)
@@ -118,7 +170,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             prev.map((msg) => (msg.id === botMsgId ? { ...msg, content: accumulatedContent } : msg))
           )
         },
-      })
+      }, undefined, sessionIds.current.get(chatId))
 
       const finalBotMsg: Message = {
         id: botMsgId,
@@ -236,6 +288,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   return (
     <ChatContext.Provider
       value={{
+        activeView,
+        setActiveView,
+        token,
+        currentUser,
+        loginSuccess,
+        logout,
         isLeftSidebarExpanded,
         toggleLeftSidebar,
         rightSidebarTab,

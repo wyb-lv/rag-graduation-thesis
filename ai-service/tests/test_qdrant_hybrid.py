@@ -1,7 +1,6 @@
 """Chay voi Qdrant that o QDRANT_URL (docker compose up -d). Dung collection tam, khong dong vao collection that."""
 import hashlib
 import json
-import sys
 import uuid
 from datetime import date
 
@@ -9,10 +8,10 @@ import numpy as np
 import pytest
 from qdrant_client import QdrantClient, models
 
-import config as cfg
-import encoders
-import index_qdrant
-import query_model as qm
+from app import config as cfg
+from app import qdrant_setup
+from app.models import encoders
+from app.rag import query_model as qm
 
 pytestmark = pytest.mark.integration
 
@@ -26,7 +25,7 @@ def unit(*components):
 
 @pytest.fixture(scope="module")
 def client():
-    c = QdrantClient(url=cfg.QDRANT_URL)
+    c = QdrantClient(url=cfg.QDRANT_URL, timeout=60)  # mac dinh 5s: de timeout khi may dang tai nang
     try:
         c.get_collections()
     except Exception as e:
@@ -60,9 +59,7 @@ def make_collection(client, monkeypatch):
     def make(points=()):
         name = f"test_hybrid_{uuid.uuid4().hex[:8]}"
         created.append(name)
-        m, ef = index_qdrant.legacy_hnsw_params(client)
-        index_qdrant.create_collection(client, name, m, ef)
-        index_qdrant.create_payload_indexes(client, name)
+        qdrant_setup.create_collection(client, name)
         if points:
             client.upsert(name, points=list(points), wait=True)
         monkeypatch.setattr(cfg, "QDRANT_COLLECTION", name)
@@ -71,7 +68,7 @@ def make_collection(client, monkeypatch):
 
     yield make
     for name in created:
-        assert name != cfg.QDRANT_LEGACY_COLLECTION
+        assert name.startswith("test_")  # tuyet doi khong dong vao collection that
         client.delete_collection(name)
 
 
@@ -88,29 +85,27 @@ def stub_query(monkeypatch, dense, lexical):
     )
 
 
-def test_collection_schema_matches_spec_and_indexes_exist_before_first_upsert(client, make_collection):
+def test_new_collection_defines_both_legs_and_indexes_exist_before_first_upsert(client, make_collection):
     name = make_collection()  # chua upsert diem nao
     info = client.get_collection(name)
     assert info.points_count == 0
 
     dense = info.config.params.vectors["dense"]
     assert dense.size == 1024 and dense.distance == models.Distance.COSINE
-    if client.collection_exists(cfg.QDRANT_LEGACY_COLLECTION):
-        legacy = client.get_collection(cfg.QDRANT_LEGACY_COLLECTION).config.hnsw_config
-        expected = (legacy.m, legacy.ef_construct)
-    else:
-        expected = (cfg.HNSW_M, cfg.HNSW_EF_CONSTRUCT)
-    assert (dense.hnsw_config.m, dense.hnsw_config.ef_construct) == expected
+    assert (dense.hnsw_config.m, dense.hnsw_config.ef_construct) == (cfg.HNSW_M, cfg.HNSW_EF_CONSTRUCT)
 
-    sparse = info.config.params.sparse_vectors["sparse"]
-    assert sparse.modifier is None  # khong IDF
+    sparse = info.config.params.sparse_vectors
+    assert set(sparse) == {"sparse"}
+    assert sparse["sparse"].modifier is None  # trong so hoc duoc cua BGE-M3: khong IDF
 
     schema = info.payload_schema
-    assert set(schema) == {"kho", "doi_tuong", "hieu_luc_tu", "hieu_luc_den"}
-    assert schema["kho"].data_type == models.PayloadSchemaType.KEYWORD and schema["kho"].params.is_tenant is True
-    assert schema["doi_tuong"].data_type == models.PayloadSchemaType.KEYWORD
-    assert schema["hieu_luc_tu"].data_type == models.PayloadSchemaType.DATETIME
-    assert schema["hieu_luc_den"].data_type == models.PayloadSchemaType.DATETIME
+    assert set(schema) == {"kho", "doi_tuong", "loai_van_ban", "hieu_luc_tu", "hieu_luc_den", "khoa_tu", "khoa_den"}
+    for field in ("kho", "doi_tuong", "loai_van_ban"):
+        assert schema[field].data_type == models.PayloadSchemaType.KEYWORD
+    for field in ("hieu_luc_tu", "hieu_luc_den"):
+        assert schema[field].data_type == models.PayloadSchemaType.DATETIME
+    for field in ("khoa_tu", "khoa_den"):
+        assert schema[field].data_type == models.PayloadSchemaType.INTEGER
 
 
 def test_hybrid_query_fuses_dense_and_sparse_with_rrf(client, make_collection, monkeypatch):
@@ -178,51 +173,108 @@ def test_no_candidates_after_filtering_answers_without_calling_groq(client, make
     assert (answer, hits, in_scope) == (qm.NO_RESULT_ANSWER, [], False)
 
 
-def test_ingestion_creates_indexes_before_upsert_and_keeps_payload_and_ids(client, monkeypatch):
-    name = f"test_hybrid_{uuid.uuid4().hex[:8]}"
-    units = [{"source": "quy_che.pdf", "text": f"doan {i}"} for i in range(3)]
-    order = []
+# ── filter metadata (kho, hieu luc, khoa, loai_van_ban) tren tung nhanh, voi mot hoac hai cau ──
 
-    class Recording(QdrantClient):
-        def create_collection(self, *a, **k):
-            order.append("create_collection")
-            return super().create_collection(*a, **k)
+META = [
+    (1, dict(loai_van_ban="quy_che", kho="A", hieu_luc_tu="2020-01-01", hieu_luc_den="2099-12-31", khoa_tu=2020)),
+    (2, dict(loai_van_ban="thong_bao", kho="A", hieu_luc_tu="2020-01-01", hieu_luc_den="2021-12-31")),  # hết hiệu lực 2021
+    (3, dict(loai_van_ban="thong_bao", kho="B", hieu_luc_tu="2030-01-01")),  # chưa có hiệu lực
+    (4, dict(loai_van_ban="thong_bao", kho="A", khoa_den=2019)),  # chỉ áp dụng khóa <= 2019
+    (5, dict(loai_van_ban="bieu_mau")),  # không có kho / ngày / khóa
+]
+LEG_SETS = [("dense",), ("sparse",), ("dense", "sparse")]
 
-        def create_payload_index(self, collection_name, field_name, *a, **k):
-            order.append(f"index:{field_name}")
-            return super().create_payload_index(collection_name, field_name, *a, **k)
 
-        def upsert(self, *a, **k):
-            order.append("upsert")
-            return super().upsert(*a, **k)
+@pytest.mark.parametrize("alt", [None, "cau viet lai"], ids=["mot_cau", "hai_cau"])
+@pytest.mark.parametrize("legs", LEG_SETS, ids=lambda legs: "+".join(legs))
+def test_every_leg_respects_kho_validity_khoa_and_loai_van_ban(make_collection, monkeypatch, legs, alt):
+    text = "[Quy chế học bổng – Điều 16]\nSinh viên đạt giải olympic quốc tế."
+    make_collection([
+        models.PointStruct(
+            id=i,
+            vector={
+                "dense": unit((0, 1)).tolist(),
+                "sparse": models.SparseVector(indices=[10], values=[1.0]),
+            },
+            payload={"source": "quy_che.pdf", "text": text, **meta},
+        )
+        for i, meta in META
+    ])
+    monkeypatch.setattr(cfg, "HYBRID_LEGS", legs)
+    stub_query(monkeypatch, unit((0, 1)), {"10": 1.0})  # mọi nhánh đều khớp CẢ 5 điểm: filter rò sẽ lộ ra ngay
 
-    monkeypatch.setattr(index_qdrant, "QdrantClient", Recording)
-    monkeypatch.setattr(index_qdrant, "load_paragraphs", lambda: units)
-    monkeypatch.setattr(cfg, "QDRANT_COLLECTION", name)
-    monkeypatch.setattr(sys, "argv", ["index_qdrant.py"])
+    def ids(**kw):
+        return {h["id"] for h in qm.retrieve("olympic", mode="hybrid", alt_question=alt, **kw)}
+
+    ref = date(2025, 6, 1)
+    assert ids(reference_date=ref) == {1, 4, 5}
+    assert ids(reference_date=date(2021, 6, 1)) == {1, 2, 4, 5}
+    assert ids(reference_date=ref, kho="A") == {1, 4}
+    assert ids(reference_date=ref, khoa=2024) == {1, 5}
+    assert ids(reference_date=ref, khoa=2018) == {4, 5}
+    assert ids(reference_date=ref, loai_van_ban=["thong_bao"]) == {4}
+    assert ids(reference_date=ref, loai_van_ban=["quy_che", "bieu_mau"]) == {1, 5}
+    assert ids(reference_date=ref, loai_van_ban=["thong_bao"], khoa=2024) == set()
+    assert ids(reference_date=ref, loai_van_ban=["khong_ton_tai"]) == set()
+    assert ids(reference_date=ref, kho="A", khoa=2024, loai_van_ban=["quy_che"]) == {1}
+
+
+def test_validate_legs_against_real_collections(client, make_collection):
+    full = make_collection()
+    qdrant_setup.validate_legs(client, full, ("dense", "sparse"))  # không ném lỗi
+
+    dense_only = f"test_hybrid_{uuid.uuid4().hex[:8]}"  # dạng collection cũ: chưa có sparse
+    client.create_collection(dense_only, vectors_config={"dense": models.VectorParams(size=4, distance=models.Distance.COSINE)})
+    try:
+        qdrant_setup.validate_legs(client, dense_only, ("dense",))
+        with pytest.raises(RuntimeError, match="sparse") as err:
+            qdrant_setup.validate_legs(client, dense_only, ("dense", "sparse"))
+        assert dense_only in str(err.value)
+    finally:
+        client.delete_collection(dense_only)
+
+
+# ---- hai cau truy van (cau goc + cau viet lai): dense + sparse cua ca hai, mot lan RRF, gop trung theo id ----
+
+def stub_by_sentence(monkeypatch, table):
+    """encode_texts tra vector theo noi dung cau: table = {cau: (dense, lexical)}."""
     monkeypatch.setattr(
         encoders, "encode_texts",
-        lambda texts, batch_size=None: (np.stack([unit((i, 1)) for i, _ in enumerate(texts)]),
-                                        [{str(100 + i): 0.5} for i, _ in enumerate(texts)]),
+        lambda texts, batch_size=None: (np.stack([table[t][0] for t in texts]), [table[t][1] for t in texts]),
     )
-    try:
-        index_qdrant.main()
-        assert order[0] == "create_collection"
-        assert sorted(order[1:5]) == ["index:doi_tuong", "index:hieu_luc_den", "index:hieu_luc_tu", "index:kho"]
-        assert order[5:] == ["upsert"]
-
-        points, _ = client.scroll(name, limit=10, with_payload=True, with_vectors=True)
-        assert sorted(p.id for p in points) == [0, 1, 2]  # id = vi tri doan, nhu schema cu
-        for p in points:
-            assert p.payload == units[p.id]
-            assert len(p.vector["dense"]) == 1024 and p.vector["sparse"].indices == [100 + p.id]
-    finally:
-        if client.collection_exists(name):
-            client.delete_collection(name)
 
 
-def test_ingestion_refuses_to_target_the_legacy_collection(client, monkeypatch):
-    monkeypatch.setattr(cfg, "QDRANT_COLLECTION", cfg.QDRANT_LEGACY_COLLECTION)
-    monkeypatch.setattr(sys, "argv", ["index_qdrant.py", "--recreate"])
-    with pytest.raises(SystemExit):
-        index_qdrant.main()
+def two_sentence_points():
+    fillers = [pt(10 + i, unit((0, 1), (20 + i, 0.75)), kho="A") for i in range(4)]  # gan "q" ve dense, day diem chi khop "alt" ra khoi top 3
+    return [
+        pt(1, unit((0, 1)), {10: 1.0}, kho="A"),                          # chi khop "q"
+        pt(2, unit((5, 1)), {50: 1.0}, kho="B"),                          # chi khop "alt"
+        pt(3, unit((0, 1), (5, 1)), {10: 0.5, 50: 0.5}, kho="A"),         # khop vua phai ca hai
+        *fillers,
+    ]
+
+
+TWO_SENTENCES = {"q": (unit((0, 1)), {"10": 1.0}), "alt": (unit((5, 1)), {"50": 1.0})}
+
+
+def test_second_sentence_reaches_a_chunk_the_first_cannot_and_a_chunk_in_several_lists_is_returned_once(client, make_collection, monkeypatch):
+    make_collection(two_sentence_points())
+    stub_by_sentence(monkeypatch, TWO_SENTENCES)
+
+    alone = [h["id"] for h in qm.retrieve("q", mode="hybrid", top_k=3)]
+    assert 2 not in alone  # diem 2 khong nam trong top 3 nhanh nao cua "q"
+
+    both = qm.retrieve("q", mode="hybrid", top_k=3, alt_question="alt")
+    ids = [h["id"] for h in both]
+    # 1 chi den tu "q", 2 chi den tu "alt"; 3 nam trong 3 trong 4 danh sach nhung chi tra ve MOT lan (RRF gop trung theo id)
+    assert sorted(ids) == [1, 2, 3]
+    scores = [h["retrieval_score"] for h in both]
+    assert scores == sorted(scores, reverse=True) and all(h["payload"]["source"] == "quy_che.pdf" for h in both)
+
+
+def test_filter_applies_to_both_sentences_so_the_rewrite_cannot_bring_back_an_excluded_chunk(client, make_collection, monkeypatch):
+    make_collection(two_sentence_points())
+    stub_by_sentence(monkeypatch, TWO_SENTENCES)
+    ids = [h["id"] for h in qm.retrieve("q", mode="hybrid", top_k=3, alt_question="alt", kho="A")]
+    assert 2 not in ids and 3 in ids  # diem 2 (kho B) la ket qua tot nhat cua "alt" nhung bi filter kho chan
+    assert len(ids) == 3  # van du top_k du diem tot nhat bi loai: loc TRUOC khi lay top-k, khong phai cat bot ket qua sau do

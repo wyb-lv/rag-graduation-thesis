@@ -8,7 +8,7 @@ from typing import AsyncIterator, Dict, Any, List, Tuple
 import edge_tts
 
 from . import config
-from .groq_client import get_client as get_groq_client
+from .llm.groq_client import get_client as get_groq_client
 
 
 class AudioTooLargeError(ValueError):

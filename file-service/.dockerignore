@@ -1,6 +1,5 @@
 target/
 uploads/
-tessdata/
 .git
 .gitignore
 .gitattributes
@@ -13,3 +12,4 @@ Dockerfile
 compose.yaml
 .env
 .env.example
+models/

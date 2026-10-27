@@ -1,0 +1,49 @@
+# Corpus danh gia router LLM (scripts/eval_router.py). Moi cau duoc hoi MOT MINH (khong lich su, khong biet khoa cua sinh vien).
+# [clarify:topic|audience|time]: thieu thong tin de tao cau tim kiem -> router phai tra clarify voi dung `missing`.
+# [answerable]: thieu chi tiet nhung van co chu de tra cuu duoc -> phai la rag (khong duoc clarify, khong duoc off_topic).
+[clarify:topic]
+điều kiện là gì?
+còn cái đó thì sao?
+được không?
+bao nhiêu?
+khi nào?
+ở đâu?
+thủ tục như thế nào?
+cần giấy tờ gì?
+có bắt buộc không?
+mức phạt thế nào?
+quy định đó áp dụng cho ai?
+vậy thì sao?
+dieu kien la gi
+con cai do thi sao
+duoc khong ban
+thế còn cái kia?
+[clarify:audience]
+Em có được xét học bổng không?
+Em có đủ điều kiện tốt nghiệp chưa?
+Mình có được miễn môn tiếng Anh không?
+Em phải học bao nhiêu tín chỉ nữa thì ra trường?
+em co duoc chuyen nganh khong
+Em có phải thi chuẩn đầu ra ngoại ngữ không?
+[clarify:time]
+Ngày thi kết thúc học phần là khi nào?
+Hạn nộp đơn xin bảo lưu là ngày nào?
+ngay bat dau dang ky hoc phan la khi nao
+[answerable]
+học phí bao nhiêu?
+hoc phi bao nhieu
+Học bổng Tinh hoa HSU giảm bao nhiêu học phí?
+Điều kiện xét học bổng là gì?
+Sinh viên được đăng ký tối đa bao nhiêu tín chỉ mỗi học kỳ?
+Thủ tục xin bảo lưu kết quả học tập như thế nào?
+Quy chế thi gồm những nội dung gì?
+Cách tính điểm trung bình tích lũy?
+Điều kiện tốt nghiệp là gì?
+Mức phạt khi nộp học phí trễ hạn là bao nhiêu?
+Quy định về đồ án tốt nghiệp?
+Hạn nộp học phí học kỳ 1 năm học 2025-2026 là khi nào?
+Quy định về chuẩn đầu ra tiếng Anh?
+Cần giấy tờ gì để làm thẻ sinh viên?
+Phúc khảo điểm thi như thế nào?
+Điều 15 quy chế đào tạo quy định gì?
+dieu kien xet hoc bong tinh hoa la gi

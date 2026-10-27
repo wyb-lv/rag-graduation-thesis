@@ -1,7 +1,8 @@
 import type { SourceCitation } from '@/types'
 import rawData from '@/data/conversations.json'
+import { authFetch, getKhoa } from '@/services/authService'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '')
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:9090').replace(/\/+$/, '')
 
 /**
  * Chuẩn hóa URL gọi tới AI Service:
@@ -28,7 +29,7 @@ interface RawApiSource {
 // Các sự kiện `data:` của POST /ask/stream và POST /ask/voice/stream
 type StreamEvent =
   | { event: 'transcription'; text: string }
-  | { event: 'sources'; in_scope: boolean; sources: RawApiSource[] }
+  | { event: 'sources'; in_scope: boolean; sources: RawApiSource[]; session_id?: string }
   | { event: 'delta'; text: string }
   | { event: 'error'; detail: string }
 
@@ -36,6 +37,7 @@ export interface StreamCallbacks {
   onTranscription?: (text: string) => void
   onSources?: (sources: SourceCitation[], inScope: boolean) => void
   onDelta?: (text: string) => void
+  onSession?: (sessionId: string) => void
 }
 
 export interface AskOptions {
@@ -63,8 +65,17 @@ function mapSources(sources: RawApiSource[]): SourceCitation[] {
   }))
 }
 
+// Ném lỗi có thông điệp cho người dùng khi response không ok (401 = hết phiên, còn lại lấy `detail` của server)
+async function assertOk(res: Response, fallback: string): Promise<void> {
+  if (res.ok) return
+  if (res.status === 401) throw new Error('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.')
+  const errorData = await res.json().catch(() => ({}))
+  const detail = typeof errorData.detail === 'string' ? errorData.detail : errorData.message
+  throw new Error(detail || `${fallback} (${res.status})`)
+}
+
 async function consumeSseResponse(res: Response, callbacks: StreamCallbacks): Promise<void> {
-  const { onTranscription, onSources, onDelta } = callbacks
+  const { onTranscription, onSources, onDelta, onSession } = callbacks
   if (!res.body) {
     throw new Error('Trình duyệt không hỗ trợ ReadableStream.')
   }
@@ -90,8 +101,10 @@ async function consumeSseResponse(res: Response, callbacks: StreamCallbacks): Pr
       return false
     }
     if (payload.event === 'transcription') onTranscription?.(payload.text)
-    else if (payload.event === 'sources') onSources?.(mapSources(payload.sources || []), payload.in_scope)
-    else if (payload.event === 'delta') onDelta?.(payload.text)
+    else if (payload.event === 'sources') {
+      if (payload.session_id) onSession?.(payload.session_id)
+      onSources?.(mapSources(payload.sources || []), payload.in_scope ?? true)
+    } else if (payload.event === 'delta') onDelta?.(payload.text)
     else if (payload.event === 'error') throw new Error(payload.detail || 'Lỗi khi sinh câu trả lời')
     return false
   }
@@ -118,40 +131,41 @@ async function consumeSseResponse(res: Response, callbacks: StreamCallbacks): Pr
 
 /**
  * Gọi POST /ask/stream và đọc SSE: `sources` một lần, `delta` nhiều lần, kết thúc bằng `[DONE]`.
+ * sessionId: server giữ lịch sử theo id này; gửi lại id của hội thoại để câu hỏi sau hiểu được câu trước.
  */
 export async function askQuestionStream(
   question: string,
   callbacks: StreamCallbacks,
-  options: AskOptions = {}
+  top_k?: number,
+  sessionId?: string
 ): Promise<void> {
   const { onSources, onDelta } = callbacks
-  const { signal, ...params } = options
   const url = buildAiUrl('/ask/stream')
 
   let res: Response
   try {
-    res = await fetch(url, {
+    res = await authFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ question, ...params }),
-      signal,
+      body: JSON.stringify({
+        question,
+        khoa: getKhoa(),
+        ...(top_k !== undefined ? { top_k } : {}),
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }),
     })
   } catch (err: unknown) {
-    if (signal?.aborted) throw err
+    // Chỉ lỗi mạng (backend chưa chạy) mới dùng bản mô phỏng; lỗi khác phải báo cho người dùng
+    if (!(err instanceof TypeError)) throw err
     console.warn(`[ChatHSU SSE] Không thể kết nối tới ${url}:`, err)
     onSources?.(rawData.sources as SourceCitation[], true)
     onDelta?.(
-      `Mình đã nhận được câu hỏi: "${question}".\n\n(Lưu ý: Chưa thể kết nối tới Backend tại ${url}. Hãy kiểm tra dịch vụ ai-service / api-gateway).`
+      `Mình đã nhận được câu hỏi: "${question}".\n\n(Lưu ý: Chưa thể kết nối tới Backend tại ${url}. Hãy chạy \`docker compose up -d\` rồi tải lại trang).`
     )
     return
   }
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}))
-    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
-    throw new Error(detail || `Lỗi máy chủ (${res.status})`)
-  }
-
+  await assertOk(res, 'Lỗi máy chủ')
   await consumeSseResponse(res, callbacks)
 }
 
@@ -165,7 +179,6 @@ export async function askVoiceStream(
   options: AskOptions = {}
 ): Promise<void> {
   const { signal, top_k, mode, kho, reference_date } = options
-  const url = buildAiUrl('/ask/voice/stream')
 
   const formData = new FormData()
   const filename = audioFile instanceof File ? audioFile.name : 'voice_message.wav'
@@ -175,19 +188,14 @@ export async function askVoiceStream(
   if (kho) formData.append('kho', kho)
   if (reference_date) formData.append('reference_date', reference_date)
 
-  const res = await fetch(url, {
+  const res = await authFetch(buildAiUrl('/ask/voice/stream'), {
     method: 'POST',
     headers: { Accept: 'text/event-stream' },
     body: formData,
     signal,
   })
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}))
-    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
-    throw new Error(detail || `Lỗi xử lý giọng nói (${res.status})`)
-  }
-
+  await assertOk(res, 'Lỗi xử lý giọng nói')
   await consumeSseResponse(res, callbacks)
 }
 
@@ -195,22 +203,16 @@ export async function askVoiceStream(
  * Luồng 2: Gửi đoạn ghi âm từ nút Mic lên POST /stt để lấy văn bản hiển thị lên ô Input.
  */
 export async function transcribeAudio(audio: Blob | File, filename = 'recording.webm'): Promise<SttResponse> {
-  const url = buildAiUrl('/stt')
   const formData = new FormData()
   const name = audio instanceof File ? audio.name : filename
   formData.append('file', audio, name)
 
-  const res = await fetch(url, {
+  const res = await authFetch(buildAiUrl('/stt'), {
     method: 'POST',
     body: formData,
   })
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}))
-    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
-    throw new Error(detail || `Lỗi nhận diện giọng nói (${res.status})`)
-  }
-
+  await assertOk(res, 'Lỗi nhận diện giọng nói')
   return res.json()
 }
 
@@ -218,19 +220,13 @@ export async function transcribeAudio(audio: Blob | File, filename = 'recording.
  * Luồng 3: Đọc nội dung câu trả lời của AI qua POST /tts (trả về MP3 Blob).
  */
 export async function synthesizeSpeech(text: string, signal?: AbortSignal): Promise<Blob> {
-  const url = buildAiUrl('/tts')
-  const res = await fetch(url, {
+  const res = await authFetch(buildAiUrl('/tts'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
     signal,
   })
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}))
-    const detail = typeof errorData.detail === 'string' ? errorData.detail : undefined
-    throw new Error(detail || `Lỗi tổng hợp giọng nói (${res.status})`)
-  }
-
+  await assertOk(res, 'Lỗi tổng hợp giọng nói')
   return res.blob()
 }
