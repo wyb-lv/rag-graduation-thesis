@@ -97,11 +97,11 @@ services:
     container_name: hsu-mongodb
     restart: unless-stopped
     ports:
-      - "127.0.0.1:27017:27017"
+      - "27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?đặt MONGO_USER trong .env}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?đặt MONGO_PASSWORD trong .env}
-    # Chỉ bind 127.0.0.1 (cho MongoDB Compass); không bind 0.0.0.0 vì chứa lịch sử hội thoại của người dùng
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-hsu}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-change_me_mongo}
+    # Không publish cổng 27017: chỉ ai-service trong mạng compose truy cập được (lịch sử hội thoại của người dùng)
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -174,7 +174,7 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-file_service}:${RABBITMQ_PASSWORD:-secret}@rabbitmq:5672/
       FILE_SERVICE_URL: http://file-service:8080
       # Lưu trữ hội thoại (cần SESSION_ENABLED=true trong ai-service/.env). Mật khẩu có ký tự đặc biệt phải URL-encode
-      MONGODB_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/?authSource=admin
+      MONGODB_URI: mongodb://${MONGO_USER:-hsu}:${MONGO_PASSWORD:-change_me_mongo}@mongodb:27017/?authSource=admin
     ports:
       - "8001:8000"   # API + Swagger UI (http://localhost:8001/docs); 8000 hay bị uvicorn chạy tay trên máy chiếm
     volumes:
