@@ -1,8 +1,8 @@
 """Cau hinh tap trung cho pipeline RAG hybrid (BGE-M3 dense+sparse -> Qdrant RRF -> reranker -> Groq Qwen).
 
 Bon bien doc tu moi truong (file .env, `environment` cua docker-compose, ENV cua Dockerfile):
-GROQ_API_KEY, GROQ_QWEN_MODEL, QDRANT_URL, GROQ_CACHE_DIR; cong them cac bien ROUTER_* / SESSION_* / GEMINI_API_KEY o
-cuoi file (router LLM va session, deu tat mac dinh). Moi gia tri khac la hang so, sua truc tiep o day
+GROQ_API_KEY, GROQ_QWEN_MODEL, QDRANT_URL, GROQ_CACHE_DIR; cong them cac bien ROUTER_* / SESSION_* / GEMINI_API_KEY / MONGODB_*
+o cuoi file (router LLM, session va luu tru hoi thoai, deu tat mac dinh). Moi gia tri khac la hang so, sua truc tiep o day
 (container phai build lai: `docker-compose up -d --build ai-service`).
 """
 import os
@@ -191,6 +191,15 @@ SESSION_CHARS_PER_TOKEN = 2.0  # dem token bao thu cho tieng Viet (co dau): it k
 SESSION_MESSAGE_MAX_CHARS = 1500  # moi tin nhan lich su dua vao prompt bi cat con ngan nay (cau tra loi dai khong chiem het ngan sach; xem ROUTER_HISTORY_MSG_CHARS)
 SESSION_USER_HEADER = "X-User-Id"  # gateway gan sau khi xac thuc JWT (JwtAuthFilter); co header nay thi khoa session = user:session
 
+# ---- Conversations (conversations.py): luu tru lau dai moi cuoc hoi thoai trong MongoDB (khac session: lich su ngan han cho prompt, het
+# han sau SESSION_TTL_S). Bat khi co MONGODB_URI va SESSION_ENABLED (session_id la khoa cua cuoc hoi thoai) ----
+MONGODB_URI = _env("MONGODB_URI", "")  # vd mongodb://user:pass@mongodb:27017/?authSource=admin
+MONGODB_DB = _env("MONGODB_DB", "hsu_chatbot")
+MONGODB_TIMEOUT_MS = _env("MONGODB_TIMEOUT_MS", 2000, int)  # Mongo chet thi moi luot hoi dap cham them toi chung nay
+CONVERSATIONS_ENABLED = bool(MONGODB_URI)
+CONVERSATIONS_LIST_MAX = 200
+CONVERSATION_TITLE_CHARS = 80  # tieu de = cau hoi dau tien, bi cat
+
 if ROUTER_ENABLED and not ROUTER_MODEL:
     raise ValueError("ROUTER_MODEL (bien moi truong GEMINI_MODEL) bat buoc khi ROUTER_ENABLED, vd gemini-3.5-flash-lite")
 if SESSION_STORE not in ("memory", "sqlite"):
@@ -224,9 +233,6 @@ QUERY_REWRITE_ENABLED = _flag(os.environ.get("QUERY_REWRITE_ENABLED") or "true")
 QUERY_REWRITE_MAX_CHARS = 300  # cau viet lai dai hon bi cat
 
 # ---- Voice (STT & TTS) ----
-# Model nhận dạng giọng nói trên Groq Cloud (hỗ trợ tiếng Việt rất tốt)
-GROQ_STT_MODEL = os.environ.get("GROQ_STT_MODEL", "whisper-large-v3")
-STT_MODEL = os.environ.get("STT_MODEL", GROQ_STT_MODEL)
 STT_LANGUAGE = os.environ.get("STT_LANGUAGE", "vi")
 # Kích thước mỗi cửa sổ phân tích năng lượng âm thanh (20ms là chuẩn DSP cho tiếng nói)
 VAD_FRAME_MS = int(os.environ.get("VAD_FRAME_MS", "20"))

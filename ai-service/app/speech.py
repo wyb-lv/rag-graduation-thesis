@@ -1,5 +1,6 @@
 import io
 import math
+import os
 import re
 import struct
 import wave
@@ -234,7 +235,7 @@ def transcribe_speech(
 
     transcription = client.audio.transcriptions.create(
         file=audio_file,
-        model=config.STT_MODEL,
+        model=os.environ["STT_MODEL"],  # model STT trên Groq, đặt trong ai-service/.env
         language=config.STT_LANGUAGE,
         prompt=DOMAIN_PROMPT,
         response_format="json",

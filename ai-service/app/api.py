@@ -23,10 +23,10 @@ import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -34,7 +34,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import iterate_in_threadpool
 
 from . import config as cfg
-from . import qdrant_setup, session, speech
+from . import conversations, qdrant_setup, session, speech
 from .ingest import embed_consumer, embed_service
 from .models import encoders
 from .rag import query_model as qm
@@ -77,6 +77,13 @@ async def lifespan(app):
             session.get_store()  # nap LlamaIndex + tao engine SQLite luc khoi dong, khong doi den request dau tien
         except Exception as e:  # service van khoi dong; request dau tien se thu lai
             log.warning("khong khoi tao duoc session store (%s): se thu lai o request dau tien", type(e).__name__)
+    if cfg.CONVERSATIONS_ENABLED:
+        if not cfg.SESSION_ENABLED:
+            log.warning("MONGODB_URI da dat nhung SESSION_ENABLED=false: khong co session_id nen khong luu cuoc hoi thoai nao")
+        try:
+            await conversations.ensure_indexes()
+        except Exception as e:  # service van khoi dong; ghi luot hoi dap se loi (va chi ghi log) cho den khi MongoDB len
+            log.warning("khong tao duoc index MongoDB (%s): kiem tra MONGODB_URI", type(e).__name__)
     # Khoi dong RabbitMQ consumer de nhan job embed tu file-service (chi chay khi RABBITMQ_URL duoc cau hinh)
     embed_consumer.start_consumer()
     yield
@@ -159,6 +166,7 @@ class _Turn:
     question: str
     session: Any = None  # session.Session; giu lock cho den _end()
     sid: Optional[str] = None
+    user_id: Optional[str] = None  # X-User-Id do gateway gan; None = khong xac thuc
     khoa: Optional[int] = None
     kho: Optional[str] = None
 
@@ -183,7 +191,8 @@ async def _begin(payload, request):
         t.sid = str(uuid.uuid4()) if payload.session_id is None else session.parse_id(payload.session_id)
         if t.sid is None:
             raise HTTPException(status_code=400, detail="session_id phai la UUID")
-        key = session.key_for(t.sid, request.headers.get(cfg.SESSION_USER_HEADER))
+        t.user_id = request.headers.get(cfg.SESSION_USER_HEADER)
+        key = session.key_for(t.sid, t.user_id)
         try:
             t.session = await (await session.store()).open(key, reset=payload.reset)
         except Exception as e:  # loi session store khong duoc lam hong cau hoi: tra loi khong co lich su, chi ghi loai loi
@@ -235,13 +244,19 @@ def _history(t):
     return t.session.history if t.session else []
 
 
-async def _remember(t, answer, intent):
-    """Luu luot da hoan tat. Loi luu khong lam hong cau tra loi da co."""
-    if t.session:
+async def _remember(t, answer, intent, store=True):
+    """Luu luot da hoan tat. Loi luu khong lam hong cau tra loi da co.
+    `store`=False (bi chan / lac de): khong vao lich su prompt cua session nhung van vao kho luu tru, vi nguoi dung da thay luot nay."""
+    if t.session and store:
         try:
             await t.session.add_turn(t.question, answer, intent.value, {"khoa": t.khoa, "kho": t.kho})
         except Exception as e:
             log.warning("session %s: khong luu duoc luot nay (%s)", session.digest(t.sid), type(e).__name__)
+    if cfg.CONVERSATIONS_ENABLED and t.sid:
+        try:
+            await conversations.add_turn(t.sid, t.user_id, t.question, answer, intent.value)
+        except Exception as e:
+            log.warning("session %s: khong luu duoc vao kho hoi thoai (%s)", session.digest(t.sid), type(e).__name__)
 
 
 @app.post("/ask", response_model=AskResponse, response_model_exclude_unset=True)  # exclude_unset: khong co session thi khong co khoa session_id
@@ -261,8 +276,7 @@ async def ask(payload: AskRequest, request: Request):
                 answer, hits, in_scope = await run_in_threadpool(qm.ask, t.question, **kw)
             intent = Intent.BLOCKED if answer == cfg.GUARD_REFUSAL_ANSWER else Intent.RAG  # guard dau ra da chan cau tra loi
             store = intent is Intent.RAG
-        if store:
-            await _remember(t, answer, intent)
+        await _remember(t, answer, intent, store)
         return AskResponse(answer=answer, in_scope=in_scope, sources=_sources(hits), intent=intent.value,
                            **({"session_id": t.sid} if t.sid else {}))
     finally:
@@ -317,8 +331,8 @@ async def ask_stream(payload: AskRequest, request: Request):
             except Exception as e:
                 yield _sse({"event": "error", "detail": f"Loi khi goi LLM: {e}"})
                 return
-            if store:  # truoc [DONE]: client dong ket noi ngay khi nhan [DONE] thi doan sau yield cuoi khong chay
-                await _remember(t, "".join(parts), intent)
+            # truoc [DONE]: client dong ket noi ngay khi nhan [DONE] thi doan sau yield cuoi khong chay
+            await _remember(t, "".join(parts), intent, store)
             yield _sse("[DONE]")
         finally:
             _end(t)
@@ -329,6 +343,82 @@ async def ask_stream(payload: AskRequest, request: Request):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         background=BackgroundTask(_end, t),  # events() chua kip chay (client ngat som) thi van nha lock
     )
+
+
+# ── Conversation endpoints (MongoDB) ─────────────────────────────────────────
+
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+    intent: Optional[str] = None  # chi co o tin nhan cua tro ly
+    ts: datetime
+
+
+class ConversationSummary(BaseModel):
+    session_id: str
+    title: str  # cau hoi dau tien, bi cat
+    created_at: datetime
+    updated_at: datetime
+
+
+class Conversation(ConversationSummary):
+    messages: List[ConversationMessage]
+
+
+def _conversation_owner(request, *, required=False):
+    """X-User-Id do gateway gan sau khi xac thuc; `required`: thieu thi 401 (liet ke can biet la cua ai)."""
+    if not cfg.CONVERSATIONS_ENABLED:
+        raise HTTPException(status_code=503, detail="Chua bat luu tru hoi thoai (thieu MONGODB_URI)")
+    user_id = request.headers.get(cfg.SESSION_USER_HEADER)
+    if required and not user_id:
+        raise HTTPException(status_code=401, detail=f"Thieu header {cfg.SESSION_USER_HEADER} (dang nhap qua api-gateway)")
+    return user_id
+
+
+def _conversation_id(session_id):
+    sid = session.parse_id(session_id)
+    if sid is None:
+        raise HTTPException(status_code=400, detail="session_id phai la UUID")
+    return sid
+
+
+@contextmanager
+def _archive_errors():
+    try:
+        yield
+    except HTTPException:
+        raise
+    except Exception as e:  # chi ghi loai loi: thong bao loi cua driver co the chua MONGODB_URI (mat khau)
+        log.warning("conversations: %s", type(e).__name__)
+        raise HTTPException(status_code=502, detail="Khong truy cap duoc kho luu tru hoi thoai")
+
+
+@app.get("/conversations", response_model=List[ConversationSummary], summary="Danh sách cuộc hội thoại của người dùng (mới nhất trước)")
+async def list_conversations(request: Request, limit: int = Query(50, ge=1, le=cfg.CONVERSATIONS_LIST_MAX)):
+    user_id = _conversation_owner(request, required=True)
+    with _archive_errors():
+        return await conversations.list_for(user_id, limit)
+
+
+@app.get("/conversations/{session_id}", response_model=Conversation, summary="Toàn bộ tin nhắn của một cuộc hội thoại")
+async def get_conversation(session_id: str, request: Request):
+    user_id, sid = _conversation_owner(request), _conversation_id(session_id)
+    with _archive_errors():
+        found = await conversations.get(sid, user_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Khong co cuoc hoi thoai nay")
+    return found
+
+
+@app.delete("/conversations/{session_id}", summary="Xóa một cuộc hội thoại (cả lịch sử ngắn hạn của session)")
+async def delete_conversation(session_id: str, request: Request):
+    user_id, sid = _conversation_owner(request), _conversation_id(session_id)
+    with _archive_errors():
+        if cfg.SESSION_ENABLED:  # khong de cuoc hoi thoai da xoa van nam trong prompt cua luot sau
+            (await (await session.store()).open(session.key_for(sid, user_id), reset=True)).release()
+        if not await conversations.delete(sid, user_id):
+            raise HTTPException(status_code=404, detail="Khong co cuoc hoi thoai nay")
+    return {"session_id": sid, "message": "Da xoa cuoc hoi thoai."}
 
 
 # ── Embed endpoints ──────────────────────────────────────────────────────────

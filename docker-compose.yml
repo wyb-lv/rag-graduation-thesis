@@ -92,6 +92,25 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage
 
+  mongodb:
+    image: mongo:8
+    container_name: hsu-mongodb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?đặt MONGO_USER trong .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?đặt MONGO_PASSWORD trong .env}
+    # Chỉ bind 127.0.0.1 (cho MongoDB Compass); không bind 0.0.0.0 vì chứa lịch sử hội thoại của người dùng
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
   # ── Ứng dụng ─────────────────────────────────────────────────────────────────
   auth-service:
     build: ./auth-service
@@ -147,11 +166,15 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_healthy
+      mongodb:
+        condition: service_healthy
     env_file: ./ai-service/.env   # API_KEY, GROQ_QWEN_MODEL, ...
     environment:
       QDRANT_URL: http://qdrant:6333
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-file_service}:${RABBITMQ_PASSWORD:-secret}@rabbitmq:5672/
       FILE_SERVICE_URL: http://file-service:8080
+      # Lưu trữ hội thoại (cần SESSION_ENABLED=true trong ai-service/.env). Mật khẩu có ký tự đặc biệt phải URL-encode
+      MONGODB_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/?authSource=admin
     ports:
       - "8001:8000"   # API + Swagger UI (http://localhost:8001/docs); 8000 hay bị uvicorn chạy tay trên máy chiếm
     volumes:
@@ -200,6 +223,8 @@ volumes:
   qdrant_storage:
     # QDRANT_VOLUME=model_qdrant_storage nếu đã có dữ liệu index từ trước (xem .env.example)
     name: ${QDRANT_VOLUME:-hsu_qdrant_data}
+  mongo_data:
+    name: kltn_mongo_data
   hf_cache:
     name: kltn_hf_cache
   groq_cache:
