@@ -25,4 +25,6 @@ llama-index-core==0.14.25
 aiosqlite==0.22.1
 SQLAlchemy==2.1.6
 greenlet==3.5.6
+pymongo==4.19.0
+dnspython==2.9.1
 edge-tts>=6.1.0

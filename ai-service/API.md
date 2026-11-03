@@ -63,6 +63,8 @@ Cau hinh tap trung o `config.py`. Bon bien cu doc tu moi truong (`.env` cua ai-s
 | `SESSION_STORE` / `SESSION_DB_URI` | `memory` / (rong) | `memory`: SQLite trong RAM (mat khi restart). `sqlite`: file `sqlite+aiosqlite:///...`, can volume |
 | `SESSION_TTL_S` / `SESSION_MAX_SESSIONS` | `1800` / `200` | Het han (tu luot luu cuoi) hoac vuot so session thi xoa (LRU) |
 | `SESSION_MAX_TURNS` / `SESSION_MAX_HISTORY_TOKENS` | `6` / `1500` | Cua so lich su dua vao prompt: lay cai nho hon |
+| `MONGODB_URI` | (rong = tat) | Bat luu tru hoi thoai lau dai, vd `mongodb://user:pass@mongodb:27017/?authSource=admin`. Can them `SESSION_ENABLED=true` (`session_id` la khoa cuoc hoi thoai) |
+| `MONGODB_DB` / `MONGODB_TIMEOUT_MS` | `hsu_chatbot` / `2000` | Ten database / thoi gian cho chon server. MongoDB chet thi moi luot hoi dap cham them toi chung nay (cau tra loi van duoc tra) |
 
 Base URL mac dinh: `http://localhost:8000`
 
@@ -242,6 +244,20 @@ Luu y rieng tu: goi Gemini free tier cho phep Google dung noi dung de cai thien 
 **Bao mat session.** Neu gateway gui header `X-User-Id` (api-gateway lam viec nay sau khi xac thuc JWT) thi khoa luu tru la `user:session_id`, nen biet UUID cua nguoi khac cung khong doc duoc lich su. Neu khong co header, `session_id` la bi mat mang theo nguoi dung (bearer): ai biet UUID thi doc/ghi duoc session do. Cong `8001` cua ai-service mo ra may host, goi thang vao do thi client tu dat duoc `X-User-Id`; chi tin header khi ai-service khong public.
 
 **Tat session.** `SESSION_ENABLED=false`: `session_id` / `reset` bi bo qua, `clarify` van chay nhung khong thay luot truoc nen cau tra loi cho cau hoi lai phai la mot cau hoi day du, va khong co chan "hoi hai lan lien tiep".
+
+## Luu tru hoi thoai (MongoDB)
+
+Bat khi co `MONGODB_URI` va `SESSION_ENABLED=true`. Khac session (lich su ngan han cho prompt, het han sau `SESSION_TTL_S`): day la ban ghi lau dai cho nguoi dung xem lai, khong bao gio vao prompt. Moi luot hoi dap da hoan tat duoc them vao cuoc hoi thoai `session_id` (ke ca luot bi chan / lac de, vi nguoi dung da thay chung; stream loi thi khong luu). `reset=true` chi xoa lich su prompt, khong xoa ban luu tru. Loi ghi chi ghi log, khong lam hong cau tra loi.
+
+Khoa luu tru giong session: co header `X-User-Id` thi la `user:session_id` (nguoi khac biet UUID cung khong doc duoc). Khong co header (goi thang, khong qua gateway) thi cuoc hoi thoai chi truy cap duoc bang `session_id` va **khong** liet ke duoc. Qua gateway: `/api/ai/conversations/...`.
+
+| Method | Path | Tra ve |
+|---|---|---|
+| `GET` | `/conversations?limit=50` | `[{session_id, title, created_at, updated_at}]` cua nguoi dung, moi nhat truoc (`limit` 1-200). Thieu `X-User-Id` -> `401` |
+| `GET` | `/conversations/{session_id}` | `{session_id, title, created_at, updated_at, messages: [{role, content, intent?, ts}]}`; `intent` chi co o tin nhan `assistant`. Khong co -> `404` |
+| `DELETE` | `/conversations/{session_id}` | Xoa ban luu tru va lich su ngan han cua session. Khong co -> `404` |
+
+Loi chung: `400` `session_id` khong phai UUID, `502` khong truy cap duoc MongoDB, `503` chua dat `MONGODB_URI`. `title` la cau hoi dau tien (toi da 80 ky tu).
 
 ## Vi du goi tu FE
 

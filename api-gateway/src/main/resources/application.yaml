@@ -25,7 +25,7 @@ spring:
           - id: ai-service-ask
             uri: ${AI_SERVICE_URL:http://localhost:8000}
             predicates:
-              - Path=/api/ai/health, /api/ai/ask, /api/ai/ask/stream, /api/ai/ask/voice/stream, /api/ai/stt, /api/ai/tts
+              - Path=/api/ai/health, /api/ai/ask, /api/ai/ask/stream, /api/ai/ask/voice/stream, /api/ai/stt, /api/ai/tts, /api/ai/conversations, /api/ai/conversations/**
             filters:
               - StripPrefix=2
               - RemoveRequestHeader=Origin
