@@ -557,3 +557,106 @@ async def text_to_speech(payload: TTSRequest):
     except Exception as e:
         log.exception("Lỗi xử lý TTS")
         raise HTTPException(status_code=500, detail=f"Lỗi tổng hợp giọng nói: {str(e)}")
+
+@app.post(
+    "/call/greeting",
+    summary="Phát câu chào mở đầu khi bắt đầu cuộc gọi thoại (Trả về trực tiếp luồng MP3)",
+)
+async def call_greeting():
+    """Backend chủ động phát câu chào mở đầu cuộc gọi và chỉ thị Frontend chuyển sang trạng thái lắng nghe."""
+    return StreamingResponse(
+        tts.stream_speech_chunks(text=cfg.CALL_GREETING_TEXT, voice=cfg.TTS_VOICE),
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+            "X-Call-Action": "listen",
+            "Access-Control-Expose-Headers": "X-Call-Action",
+        },
+    )
+
+
+@app.post(
+    "/call/turn",
+    summary="Xử lý trọn gói 1 lượt đàm thoại: Audio In -> STT -> RAG (Voice Mode) -> TTS Audio Stream Out",
+)
+async def call_turn(
+    file: UploadFile = File(...),
+    top_k: int = Form(cfg.TOP_K_RERANK),
+    mode: Literal["dense", "hybrid", "hybrid_rerank"] = Form(cfg.RAG_MODE),
+    kho: Optional[str] = Form(None),
+    reference_date: Optional[date] = Form(None),
+    khoa: Optional[int] = Form(None),
+    loai_van_ban: Optional[List[str]] = Form(None),
+):
+    """
+    Toàn bộ nghiệp vụ cuộc gọi nằm tại Backend:
+      1. Nhận âm thanh từ Mic -> Kiểm tra bảo mật & STT (Groq Whisper + Phonetic Fix HSU).
+      2. Nếu không có tiếng nói -> Trả 204 No Content + X-Call-Action: listen để FE nghe tiếp.
+      3. Nếu có câu hỏi -> Truy vấn Qdrant RAG -> Sinh câu trả lời khẩu ngữ (voice_mode=True).
+      4. Cắt từng câu ngay khi LLM đang sinh và stream thẳng ra audio/mpeg về cho Loa.
+    """
+    content, filename = _read_and_validate_audio(file)
+    try:
+        stt_result = await run_in_threadpool(stt.transcribe_speech, content, filename)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Lỗi xử lý STT trong /call/turn")
+        raise HTTPException(status_code=500, detail=f"Lỗi nhận diện giọng nói: {str(e)}")
+
+    question = (stt_result.get("text") or "").strip()
+    if cfg.GUARD_ENABLED and question:
+        question = guard.normalize_question(question)
+
+    # Nếu người dùng im lặng hoặc chỉ có tạp âm: trả 204 để FE tự động mở mic nghe tiếp
+    if not stt_result.get("is_speech") or not question:
+        return Response(
+            content=b"",
+            status_code=204,
+            headers={
+                "X-Call-Action": "listen",
+                "Access-Control-Expose-Headers": "X-Call-Action",
+            },
+        )
+
+    find_kwargs: Dict[str, Any] = {
+        "top_k": top_k,
+        "mode": mode,
+        "kho": kho,
+        "reference_date": reference_date,
+    }
+    if khoa is not None:
+        find_kwargs["khoa"] = khoa
+    if loai_van_ban is not None:
+        find_kwargs["loai_van_ban"] = loai_van_ban
+
+    with _pipeline_errors():
+        hits = await run_in_threadpool(qm.find_hits, question, **find_kwargs)
+        text_iter = (
+            qm.generate_answer_stream(question, hits, voice_mode=True)
+            if hits
+            else iter([qm.NO_RESULT_ANSWER])
+        )
+
+    async def audio_stream():
+        try:
+            async for mp3_chunk in tts.stream_speech_from_text_iter(text_iter, voice=cfg.TTS_VOICE):
+                if mp3_chunk:
+                    yield mp3_chunk
+        except guard.OutputBlocked:
+            async for mp3_chunk in tts.stream_speech_chunks(cfg.GUARD_REFUSAL_ANSWER, voice=cfg.TTS_VOICE):
+                yield mp3_chunk
+        except Exception:
+            log.exception("Lỗi khi stream âm thanh trả lời trong /call/turn")
+
+    return StreamingResponse(
+        audio_stream(),
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+            "X-Call-Action": "listen",
+            "Access-Control-Expose-Headers": "X-Call-Action",
+        },
+    )

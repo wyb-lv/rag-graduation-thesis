@@ -37,7 +37,7 @@ export interface Conversation {
   createdAt?: string
 }
 
-export type ActiveView = 'chat' | 'ocr'
+export type ActiveView = 'chat' | 'ocr' | 'call'
 
 export type OcrStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
 

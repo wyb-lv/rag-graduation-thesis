@@ -3,11 +3,12 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { GreetingView } from '@/components/chat/GreetingView'
 import { ChatArea } from '@/components/chat/ChatArea'
 import { ChatInput } from '@/components/chat/ChatInput'
+import { VoiceCallView } from '@/components/chat/VoiceCallView'
 import { AuthScreen } from '@/components/auth/AuthScreen'
 import { OcrDemoView } from '@/components/ocr/OcrDemoView'
 
 function MainContent() {
-  const { token, activeView, messages, isLoading, sendMessage, sendVoiceMessage } = useChat()
+  const { token, activeView, setActiveView, messages, isLoading, sendMessage, sendVoiceMessage } = useChat()
 
   if (!token) {
     return <AuthScreen />
@@ -17,6 +18,8 @@ function MainContent() {
     <AppLayout>
       {activeView === 'ocr' ? (
         <OcrDemoView />
+      ) : activeView === 'call' ? (
+        <VoiceCallView onEndCall={() => setActiveView('chat')} />
       ) : messages.length === 0 ? (
         <GreetingView onSend={sendMessage} onSendVoice={sendVoiceMessage} disabled={isLoading} />
       ) : (

@@ -24,7 +24,7 @@ class UnsupportedAudioFormatError(ValueError):
 DOMAIN_PROMPT = (
     "HSU, Đại học Hoa Sen, tín chỉ, học phần, "
     "rút học phần, học phí, học bổng, điểm rèn luyện, GPA, điểm trung bình tích lũy, "
-    "khóa luận tốt nghiệp, thực tập doanh nghiệp, chuẩn đầu ra, TOEIC, bảo lưu, "
+    "khóa luận tốt nghiệp, thực tập doanh nghiệp, chuẩn đầu ra, TOEIC, IELTS, điểm F, bảo lưu, "
     "cảnh báo học vụ, buộc thôi học, niên chế, học kỳ, đăng ký học phần, "
     "phòng Đào tạo, công tác sinh viên, quy chế đào tạo."
 )
@@ -37,11 +37,17 @@ PHONETIC_RULES: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\bđiểm\s+rèn\s+liện\b", re.IGNORECASE), "điểm rèn luyện"),
     (re.compile(r"\bkhóa\s+lận\b", re.IGNORECASE), "khóa luận"),
     (re.compile(r"\bbão\s+lưu\b", re.IGNORECASE), "bảo lưu"),
-    (re.compile(r"\bquy\s+chế\s+tín\s+chĩ\b", re.IGNORECASE), "quy chế tín chỉ"),
+    (re.compile(r"\bchuẩn\s+đầu\s+ga\b", re.IGNORECASE), "chuẩn đầu ra"),
+    (re.compile(r"\bngành\s+lật\b", re.IGNORECASE), "ngành Luật"),
+    (re.compile(r"\bthực\s+tập\s+danh\s+nghiệp\b", re.IGNORECASE), "thực tập doanh nghiệp"),
+    (re.compile(r"\bđiểm\s+ép\b", re.IGNORECASE), "điểm F"),
     (re.compile(r"\bhắt\s*ét\s*u\b", re.IGNORECASE), "HSU"),
     (re.compile(r"\bhắt\s*ét\s*iu\b", re.IGNORECASE), "HSU"),
+    (re.compile(r"\bhát\s*ét\s*u\b", re.IGNORECASE), "HSU"),
     (re.compile(r"\bgi\s*pi\s*ây\b", re.IGNORECASE), "GPA"),
+    (re.compile(r"\bgờ\s*pê\s*a\b", re.IGNORECASE), "GPA"),
     (re.compile(r"\btô\s*ích\b", re.IGNORECASE), "TOEIC"),
+    (re.compile(r"\bai\s*eo(?:\s*sờ)?\b", re.IGNORECASE), "IELTS"),
 ]
 
 
@@ -193,9 +199,11 @@ def transcribe_speech(
         }
 
     client = get_groq_client()
-    audio_file = (filename, io.BytesIO(processed_bytes))
-
-    transcription = client.audio.transcriptions.create(
+    # get_groq_client() đặt max_retries=0 cho chat(); dùng with_options để bật retry riêng cho Whisper STT
+    stt_client = client.with_options(max_retries=2, timeout=20.0) if hasattr(client, "with_options") else client
+    # Truyền thẳng processed_bytes (kiểu bytes) thay vì BytesIO để không bị lệch con trỏ EOF khi SDK tự động retry
+    audio_file = (filename, processed_bytes)
+    transcription = stt_client.audio.transcriptions.create(
         file=audio_file,
         model=cfg.STT_MODEL,
         language=cfg.STT_LANGUAGE,

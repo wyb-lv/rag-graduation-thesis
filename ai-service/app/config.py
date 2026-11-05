@@ -223,6 +223,9 @@ STT_LANGUAGE = _env("STT_LANGUAGE", "vi")
 STT_VAD_ENERGY_THRESHOLD_DB = _env("STT_VAD_ENERGY_THRESHOLD_DB", -38.0, float)
 TTS_VOICE = _env("TTS_VOICE", "vi-VN-HoaiMyNeural")
 TTS_RATE = _env("TTS_RATE", "+0%")
+
+EDGE_TTS_ENABLED = _flag(os.environ.get("EDGE_TTS_ENABLED", "false"))
+
 # Giới hạn dung lượng file âm thanh tối đa (5MB ~ 2.5 phút WAV 16kHz) để chống tràn RAM/OOM
 MAX_AUDIO_BYTES = _env("MAX_AUDIO_BYTES", 5 * 1024 * 1024, int)
 
@@ -231,3 +234,13 @@ MAX_AUDIO_BYTES = _env("MAX_AUDIO_BYTES", 5 * 1024 * 1024, int)
 # Bat mac dinh; dat QUERY_REWRITE_ENABLED=false de tat (vd khi het quota Groq) ----
 QUERY_REWRITE_ENABLED = _flag(os.environ.get("QUERY_REWRITE_ENABLED") or "true")
 QUERY_REWRITE_MAX_CHARS = 300  # cau viet lai dai hon bi cat
+
+# Thêm vào ngay dưới dòng MAX_AUDIO_BYTES trong ai-service/app/config.py:
+CALL_GREETING_TEXT = _env(
+    "CALL_GREETING_TEXT",
+    "Xin chào! Mình là trợ lý học vụ Đại học Hoa Sen. Bạn có câu hỏi nào cần giải đáp không?",
+)
+CALL_NO_SPEECH_TEXT = _env(
+    "CALL_NO_SPEECH_TEXT",
+    "Mình chưa nghe rõ câu hỏi, bạn vui lòng nói lại giúp mình nhé.",
+)

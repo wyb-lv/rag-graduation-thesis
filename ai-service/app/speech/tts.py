@@ -7,8 +7,8 @@ from collections import OrderedDict
 import logging
 import re
 import time
-from typing import AsyncIterator, List, Optional, Tuple
-
+from typing import AsyncIterator, Iterator, List, Optional, Tuple
+from starlette.concurrency import iterate_in_threadpool
 import edge_tts
 import httpx
 
@@ -222,7 +222,7 @@ async def _stream_single_segment(
     now = time.monotonic()
 
     # Nếu Edge-TTS không đang trong thời gian ngắt mạch (cooldown), thử gọi với timeout ngắn
-    if now >= _edge_tts_cooldown_until:
+    if cfg.EDGE_TTS_ENABLED and now >= _edge_tts_cooldown_until:
         async with _EDGE_TTS_SEM:
             if time.monotonic() >= _edge_tts_cooldown_until:
                 audio_received = False
@@ -350,3 +350,41 @@ async def synthesize_speech_bytes(
     async for data in stream_speech_chunks(text=text, voice=voice, rate=rate):
         audio_chunks.extend(data)
     return bytes(audio_chunks)
+
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?;:])\s+|\n+")
+async def stream_speech_from_text_iter(
+    text_iter: Iterator[str],
+    voice: str = cfg.TTS_VOICE,
+    rate: str = cfg.TTS_RATE,
+    min_chunk_chars: int = 45,
+) -> AsyncIterator[bytes]:
+    """
+    Nhận luồng token (delta) từ LLM và tổng hợp cuốn chiếu sang luồng âm thanh MP3:
+      - Không đợi LLM sinh xong cả bài: cứ gom đủ 1 câu hoàn chỉnh (>= min_chunk_chars)
+        là chuẩn hóa học vụ và phát MP3 ngay lập tức.
+    """
+    buffer = ""
+    async for delta in iterate_in_threadpool(text_iter):
+        if not delta:
+            continue
+        buffer += delta
+        # Kiểm tra xem trong buffer đã có điểm ngắt câu hoàn chỉnh chưa
+        parts = _SENTENCE_BOUNDARY_RE.split(buffer)
+        if len(parts) > 1:
+            # Tất cả các phần trước phần tử cuối cùng đều đã kết thúc bằng dấu câu
+            complete_text = " ".join(p.strip() for p in parts[:-1] if p.strip())
+            if len(complete_text) >= min_chunk_chars:
+                buffer = parts[-1]
+                cleaned = normalize_academic_text(complete_text)
+                if is_speakable_text(cleaned):
+                    for seg in _split_stream_segments(cleaned):
+                        async for audio_chunk in _stream_single_segment(seg, voice=voice, rate=rate):
+                            if audio_chunk:
+                                yield audio_chunk
+    # Đọc nốt phần văn bản còn sót lại trong buffer khi LLM kết thúc
+    remainder = normalize_academic_text(buffer.strip())
+    if is_speakable_text(remainder):
+        for seg in _split_stream_segments(remainder):
+            async for audio_chunk in _stream_single_segment(seg, voice=voice, rate=rate):
+                if audio_chunk:
+                    yield audio_chunk
