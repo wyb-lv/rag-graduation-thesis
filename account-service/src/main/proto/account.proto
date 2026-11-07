@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package account;
+
+option java_multiple_files = true;
+option java_package = "com.example.accountservice.grpc";
+
+// Chỉ auth-service gọi (không qua gateway). Hai bản giống hệt nhau (account-service/src/main/proto và auth-service/src/main/proto): sửa thì sửa cả hai.
+// Mã lỗi: NOT_FOUND = không có tài khoản.
+service AccountInternalService {
+  // Trả mật khẩu đã băm để auth-service tự so khớp (account-service không băm/so khớp mật khẩu). Tài khoản bị khóa vẫn được trả về.
+  rpc GetCredentials (GetCredentialsRequest) returns (Credentials);
+  rpc GetAccount (GetAccountRequest) returns (AccountInfo);
+  // Đăng xuất hoặc phát hiện refresh token bị dùng lại: hủy mọi phiên của người dùng.
+  rpc BumpTokenVersion (BumpTokenVersionRequest) returns (BumpTokenVersionResponse);
+}
+
+message GetCredentialsRequest {
+  string username = 1;
+}
+
+message GetAccountRequest {
+  int64 id = 1;
+}
+
+message BumpTokenVersionRequest {
+  int64 id = 1;
+}
+
+message BumpTokenVersionResponse {}
+
+message Credentials {
+  AccountInfo account = 1;
+  string password_hash = 2;
+}
+
+// Dữ liệu auth-service cần để cấp và kiểm tra token. Không chứa mật khẩu.
+message AccountInfo {
+  int64 id = 1;
+  string username = 2;
+  string role = 3;
+  int64 department_id = 4;
+  int32 token_version = 5;
+  bool active = 6;
+  bool must_change_password = 7;
+}
