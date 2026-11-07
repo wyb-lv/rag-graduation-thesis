@@ -1,0 +1,334 @@
+openapi: 3.1.0
+info:
+  title: Account Service API
+  description: Quản lý tài khoản (Admin). Gọi qua api-gateway với Bearer token của
+    ADMIN.
+  version: "1.0"
+servers:
+- url: http://localhost:9090
+  description: api-gateway
+security:
+- bearerAuth: []
+tags:
+- name: Accounts
+  description: "Quản lý tài khoản. Chỉ ADMIN gọi được (401 chưa đăng nhập, 403 khô\
+    ng phải ADMIN), riêng /me dành cho mọi người dùng đã đăng nhập."
+paths:
+  /api/accounts/{id}:
+    put:
+      tags:
+      - Accounts
+      summary: "Sửa email, đơn vị, chức vụ, role (username không đổi được)"
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAccountRequest"
+        required: true
+      responses:
+        "404":
+          description: Không có tài khoản
+        "409":
+          description: Trùng email
+  /api/accounts:
+    get:
+      tags:
+      - Accounts
+      summary: "Danh sách tài khoản (phân trang, sắp xếp theo id), lọc theo đơn vị\
+        \ / role / trạng thái"
+      operationId: list
+      parameters:
+      - name: departmentId
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+      - name: role
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - ADMIN
+          - MANAGER
+          - EMPLOYEE
+      - name: active
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+          minimum: 0
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PageResponseAccountResponse"
+    post:
+      tags:
+      - Accounts
+      summary: Tạo tài khoản với mật khẩu tạm; người dùng bị buộc đổi mật khẩu ở lần
+        đăng nhập đầu
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAccountRequest"
+        required: true
+      responses:
+        "409":
+          description: Trùng username hoặc email
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AccountResponse"
+  /api/accounts/{id}/reset-password:
+    post:
+      tags:
+      - Accounts
+      summary: "Đặt lại mật khẩu: mật khẩu tạm, buộc đổi ở lần đăng nhập sau, hủy\
+        \ mọi phiên (access và refresh token) đang đăng nhập"
+      operationId: resetPassword
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+        required: true
+      responses:
+        "404":
+          description: Không có tài khoản
+        "204":
+          description: No Content
+  /api/accounts/me/change-password:
+    post:
+      tags:
+      - Accounts
+      summary: Tự đổi mật khẩu (mọi role); xóa cờ mustChangePassword
+      operationId: changePassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+        required: true
+      responses:
+        "400":
+          description: Sai mật khẩu hiện tại hoặc mật khẩu mới không hợp lệ
+        "204":
+          description: No Content
+  /api/accounts/{id}/status:
+    patch:
+      tags:
+      - Accounts
+      summary: Vô hiệu hóa (active=false) hoặc kích hoạt lại (active=true); tăng token_version
+        nên mọi access token và refresh token đã cấp đều bị từ chối
+      operationId: setStatus
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusRequest"
+        required: true
+      responses:
+        "400":
+          description: Admin tự vô hiệu hóa chính mình
+        "404":
+          description: Không có tài khoản
+  /api/accounts/me:
+    get:
+      tags:
+      - Accounts
+      summary: Thông tin tài khoản của chính người gọi (mọi role)
+      operationId: me
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AccountResponse"
+components:
+  schemas:
+    UpdateAccountRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          minLength: 0
+        departmentId:
+          type: integer
+          format: int64
+        position:
+          type: string
+          maxLength: 100
+          minLength: 0
+        role:
+          type: string
+          enum:
+          - ADMIN
+          - MANAGER
+          - EMPLOYEE
+      required:
+      - departmentId
+      - email
+      - role
+    CreateAccountRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          maxLength: 50
+          minLength: 0
+          pattern: \S+
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          minLength: 0
+        departmentId:
+          type: integer
+          format: int64
+        position:
+          type: string
+          maxLength: 100
+          minLength: 0
+        role:
+          type: string
+          enum:
+          - ADMIN
+          - MANAGER
+          - EMPLOYEE
+        tempPassword:
+          type: string
+          maxLength: 72
+          minLength: 8
+      required:
+      - departmentId
+      - email
+      - role
+      - tempPassword
+      - username
+    AccountResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        email:
+          type: string
+        departmentId:
+          type: integer
+          format: int64
+        position:
+          type: string
+        role:
+          type: string
+          enum:
+          - ADMIN
+          - MANAGER
+          - EMPLOYEE
+        active:
+          type: boolean
+        mustChangePassword:
+          type: boolean
+    ResetPasswordRequest:
+      type: object
+      properties:
+        tempPassword:
+          type: string
+          maxLength: 72
+          minLength: 8
+      required:
+      - tempPassword
+    ChangePasswordRequest:
+      type: object
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+        newPassword:
+          type: string
+          maxLength: 72
+          minLength: 8
+      required:
+      - currentPassword
+      - newPassword
+    StatusRequest:
+      type: object
+      properties:
+        active:
+          type: boolean
+      required:
+      - active
+    PageResponseAccountResponse:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountResponse"
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
