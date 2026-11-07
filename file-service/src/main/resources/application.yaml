@@ -3,7 +3,6 @@ spring:
     name: file-service
 
   # Java 21: xử lý request HTTP (Tomcat) bằng virtual thread.
-  # OCR vẫn chạy trên platform thread riêng (RabbitMQConfig) vì là việc nặng CPU + gọi native.
   threads:
     virtual:
       enabled: true
@@ -66,26 +65,9 @@ minio:
   bucket: documents
 
 ocr:
-  # Thư mục chứa <lang>.traineddata. Trong container: OCR_TESSDATA_PATH=/usr/share/tesseract-ocr/5/tessdata
-  tessdata-path: ./tessdata
-  language: vie
-  # onnx = PaddleOCR (phát hiện vùng chữ) + VietOCR (đọc chữ), chính xác hơn Tesseract, nhất là bảng; tesseract = như cũ.
-  # Không nạp được model trong models-path thì tự dùng Tesseract
-  engine: ${OCR_ENGINE:onnx}
-  models-path: ${OCR_MODELS_PATH:./models}
-  # Độ phân giải render trang PDF scan trước khi OCR
-  dpi: 300
-  # Trang PDF có ít hơn số ký tự này (không tính khoảng trắng) được coi là trang scan và sẽ OCR
-  min-text-chars: 20
-  # Số file OCR song song (số consumer của queue OCR)
-  threads: 2
+  # OCR do ai-service làm (lấy job từ hàng đợi, tải file qua GET /api/documents/download/{id}, báo kết quả về PUT /internal/documents/{id}/ocr).
   publish-confirm-timeout: 5s
   # Chu kỳ quét tài liệu chưa vào được hàng đợi để gửi lại
   recovery-initial-delay: PT10S
   recovery-interval: PT30S
-
-# Sau khi OCR xong, tự động publish embed job sang ai-service qua RabbitMQ.
-# Tắt nếu không dùng ai-service hoặc muốn embed thủ công (POST /api/documents/{id}/embed).
-embed:
-  enabled: ${EMBED_ENABLED:true}
 

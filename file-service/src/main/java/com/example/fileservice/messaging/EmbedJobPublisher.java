@@ -2,7 +2,6 @@ package com.example.fileservice.messaging;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import static com.example.fileservice.config.RabbitMQConfig.EMBED_EXCHANGE;
@@ -20,9 +19,6 @@ public class EmbedJobPublisher {
 
     private final RabbitTemplate rabbitTemplate;
 
-    @Value("${embed.enabled:true}")
-    private boolean embedEnabled;
-
     public EmbedJobPublisher(RabbitTemplate rabbitTemplate) {
         this.rabbitTemplate = rabbitTemplate;
     }
@@ -32,15 +28,10 @@ public class EmbedJobPublisher {
      *
      * @param documentId ID tài liệu
      * @param source     Tên tài liệu (title)
-     * @param kho        Nhãn kho (có thể null)
      */
-    public void publish(Long documentId, String source, String kho) {
-        if (!embedEnabled) {
-            log.debug("Embed bị tắt (embed.enabled=false), bỏ qua tài liệu {}", documentId);
-            return;
-        }
+    public void publish(Long documentId, String source) {
         try {
-            EmbedJobMessage msg = new EmbedJobMessage(documentId, source, kho, null, null);
+            EmbedJobMessage msg = new EmbedJobMessage(documentId, source, null, null, null);
             rabbitTemplate.convertAndSend(EMBED_EXCHANGE, EMBED_ROUTING_KEY, msg);
             log.info("Đã gửi embed job cho tài liệu {}", documentId);
         } catch (Exception e) {
@@ -55,9 +46,6 @@ public class EmbedJobPublisher {
      * @param documentId ID tài liệu cần xóa vector
      */
     public void publishDelete(Long documentId) {
-        if (!embedEnabled) {
-            return;
-        }
         try {
             EmbedJobMessage msg = new EmbedJobMessage(documentId, null, null, null, null, "DELETE");
             rabbitTemplate.convertAndSend(EMBED_EXCHANGE, EMBED_ROUTING_KEY, msg);

@@ -15,12 +15,17 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
 @Service
 public class DocumentService {
+
+    // Định dạng ai-service OCR / đọc được (xem ai-service app/ocr/extract.py)
+    private static final Set<String> SUPPORTED_EXTENSIONS = Set.of("pdf", "docx", "png", "jpg", "jpeg", "tif", "tiff", "bmp");
 
     private final DocumentRepository documentRepository;
     private final OcrJobPublisher ocrJobPublisher;
@@ -38,7 +43,7 @@ public class DocumentService {
     public Document storeFile(MultipartFile file, String title) throws Exception {
         String originalFileName = StringUtils.cleanPath(Objects.requireNonNull(file.getOriginalFilename()));
 
-        if (!TextExtractionService.isSupported(originalFileName)) {
+        if (!isSupported(originalFileName)) {
             throw new Exception("Chỉ hỗ trợ định dạng PDF, DOCX và ảnh (PNG, JPG, TIFF, BMP)!");
         }
 
@@ -70,6 +75,11 @@ public class DocumentService {
         // RabbitMQ lỗi thì tài liệu vẫn PENDING và OcrJobRecovery gửi lại sau, upload vẫn thành công
         ocrJobPublisher.publish(doc.getId());
         return doc;
+    }
+
+    private static boolean isSupported(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        return dot >= 0 && SUPPORTED_EXTENSIONS.contains(fileName.substring(dot + 1).toLowerCase(Locale.ROOT));
     }
 
     public void reprocessOcr(Long id) throws Exception {

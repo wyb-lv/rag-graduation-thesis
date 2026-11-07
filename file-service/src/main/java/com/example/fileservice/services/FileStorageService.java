@@ -13,12 +13,8 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Set;
 
 /** Lưu file upload trên MinIO; tên object là Document.storedFileName. */
@@ -64,23 +60,11 @@ public class FileStorageService {
     public InputStream open(String objectName) throws NoSuchFileException {
         try {
             return minio.getObject(GetObjectArgs.builder().bucket(bucket).object(objectName).build());
-        } catch (ErrorResponseException e) {
-            if (NOT_FOUND_CODES.contains(e.errorResponse().code())) {
+        } catch (Exception e) {
+            if (e instanceof ErrorResponseException missing && NOT_FOUND_CODES.contains(missing.errorResponse().code())) {
                 throw new NoSuchFileException(objectName, null, "không còn trên MinIO");
             }
             throw new StorageException("Không đọc được file từ MinIO: " + objectName, e);
-        } catch (Exception e) {
-            throw new StorageException("Không đọc được file từ MinIO: " + objectName, e);
-        }
-    }
-
-    public void download(String objectName, Path target) throws NoSuchFileException {
-        try (InputStream in = open(objectName)) {
-            Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
-        } catch (NoSuchFileException e) {
-            throw e;
-        } catch (IOException e) {
-            throw new StorageException("Không tải được file từ MinIO: " + objectName, e);
         }
     }
 
