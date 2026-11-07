@@ -1,12 +1,8 @@
-"""Tra loi cau hoi bang RAG hybrid: loc metadata -> BGE-M3 (dense + sparse) -> Qdrant RRF -> jina-reranker-v3.5 -> Groq Qwen.
+"""Tra loi cau hoi bang RAG hybrid + rerank: loc metadata -> BGE-M3 (dense) + BM25 -> Qdrant RRF -> jina-reranker-v3.5 -> Groq Qwen.
 Bo loc metadata (kho, hieu luc, khoa, loai_van_ban) gan vao TUNG lan tim vector nen Qdrant thu hep tai lieu truoc khi lay top-k.
-Tuy chon (QUERY_REWRITE_ENABLED): Qwen viet lai cau hoi, tim dense + sparse cho ca hai cau, RRF mot lan tren moi danh sach
-(Qdrant gop trung theo id) roi moi rerank theo cau goc.
-
-Ba mode (RAG_MODE / --mode / tham so `mode`), khong can sua code:
-  dense          : chi vector `dense`
-  hybrid         : cac nhanh trong HYBRID_LEGS (dense, sparse; prefetch moi nhanh `top_k_retrieval`, hop nhat RRF)
-  hybrid_rerank  : hybrid, roi jina-reranker-v3.5 giu `top_k_rerank` doan tot nhat
+Cac nhanh trong HYBRID_LEGS (dense, bm25) lay moi nhanh `top_k_retrieval` ung vien, hop nhat RRF phia Qdrant, roi
+jina-reranker-v3.5 giu `top_k_rerank` doan tot nhat. Qwen viet lai cau hoi (query_rewrite.py), tim dense + bm25
+cho ca hai cau, RRF mot lan tren moi danh sach (Qdrant gop trung theo id) roi moi rerank theo cau goc.
 Nap du lieu vao Qdrant qua POST /embed hoac RabbitMQ (ingest/embed_service.py); chay docker compose up -d truoc.
 """
 import argparse
@@ -15,6 +11,7 @@ from datetime import date, datetime, time
 
 from qdrant_client import QdrantClient, models
 
+from .. import bm25
 from .. import config as cfg
 from ..router import guard
 from ..llm import groq_client
@@ -34,7 +31,7 @@ BASE_SYSTEM_PROMPT = (
     "3. Nếu các đoạn trích không chứa thông tin để trả lời, hãy nói rõ: "
     "\"Các đoạn trích được cung cấp không chứa thông tin để trả lời câu hỏi này.\" và không suy đoán."
 )
-# Them quy tac chong injection + canary (guard.py). BASE_SYSTEM_PROMPT la ban cu, dung khi GUARD_ENABLED=false.
+# Them quy tac chong injection + canary (guard.py).
 SYSTEM_PROMPT = guard.harden_prompt(BASE_SYSTEM_PROMPT)
 
 _qdrant = None
@@ -86,24 +83,23 @@ def build_filter(kho=None, reference_date=None, khoa=None, loai_van_ban=None):
 
 def _query_legs(question, legs):
     """{ten nhanh: vector truy van} cho cac nhanh co token; nhanh khong co token (vd cau hoi toan dau cau) bi bo.
-    Ca hai nhanh dung chung mot lan encode BGE-M3 (GPU)."""
-    dense_vecs, lexical_weights = encoders.encode_texts([question])
+    Chi nap BGE-M3 (GPU) khi co nhanh dense; bm25 chay CPU (bm25.py)."""
     queries = {}
     for leg in legs:
         if leg == "dense":
-            queries[leg] = dense_vecs[0].tolist()
-        elif leg == "sparse":
-            sparse = encoders.to_sparse_vector(lexical_weights[0])
-            if sparse.indices:
-                queries[leg] = sparse
+            queries[leg] = encoders.encode_texts([question])[0].tolist()
+        elif leg == "bm25":
+            vec = bm25.bm25_query_vector(question)
+            if vec.indices:
+                queries[leg] = vec
         else:
-            raise ValueError(f"HYBRID_LEGS chi nhan 'dense' va 'sparse', nhan duoc '{leg}'")
+            raise ValueError(f"HYBRID_LEGS chi nhan 'dense' va 'bm25', nhan duoc '{leg}'")
     return queries
 
 
-def _legs(question, mode):
-    """{ten nhanh: vector truy van} cua mot cau; moi nhanh deu khong co token -> chi dung nhanh dense nhu truoc day."""
-    return _query_legs(question, ("dense",) if mode == "dense" else cfg.HYBRID_LEGS) or _query_legs(question, ("dense",))
+def _legs(question):
+    """{ten nhanh: vector truy van} cua mot cau; moi nhanh deu khong co token -> chi dung nhanh dense."""
+    return _query_legs(question, cfg.HYBRID_LEGS) or _query_legs(question, ("dense",))
 
 
 def _leg_prefetch(leg, query, flt, ef, top_k):
@@ -116,19 +112,18 @@ def _leg_prefetch(leg, query, flt, ef, top_k):
     )
 
 
-def retrieve(question, mode=None, kho=None, reference_date=None, top_k=None, khoa=None, loai_van_ban=None, alt_question=None):
+def retrieve(question, kho=None, reference_date=None, top_k=None, khoa=None, loai_van_ban=None, alt_question=None):
     """Tim `top_k` (mac dinh top_k_retrieval) ung vien; moi hit: id, source, text, payload, retrieval/rerank_score.
 
-    Mode `dense` chi truy van vector dense; `hybrid`/`hybrid_rerank` truy van cac nhanh trong HYBRID_LEGS roi hop nhat
-    RRF phia Qdrant. Cung mot filter duoc gan vao TUNG prefetch: nhanh nao thieu filter se tra ve ca doan ngoai pham vi.
+    Truy van cac nhanh trong HYBRID_LEGS roi hop nhat RRF phia Qdrant. Cung mot filter duoc gan vao TUNG prefetch:
+    nhanh nao thieu filter se tra ve ca doan ngoai pham vi.
     Chi con mot nhanh co token thi truy van thang nhanh do (diem la diem cua nhanh, khong phai RRF).
 
     `alt_question` (cau viet lai, khac `question`): tim moi nhanh cho CA HAI cau, roi RRF mot lan tren tat ca danh sach
-    (dense, sparse x 2 cau) trong mot request Qdrant. Filter van nam o tung nhanh, nen cau viet lai khong keo ve doan ngoai pham vi."""
-    mode = _check_mode(mode)
+    (dense, bm25 x 2 cau) trong mot request Qdrant. Filter van nam o tung nhanh, nen cau viet lai khong keo ve doan ngoai pham vi."""
     top_k = top_k or cfg.TOP_K_RETRIEVAL
     texts = [question] + ([alt_question] if alt_question and alt_question != question else [])
-    legs = [(leg, query) for text in texts for leg, query in _legs(text, mode).items()]
+    legs = [(leg, query) for text in texts for leg, query in _legs(text).items()]
     flt = build_filter(kho, reference_date, khoa, loai_van_ban)
     ef = models.SearchParams(hnsw_ef=cfg.HNSW_EF)  # efSearch chi co nghia voi nhanh dense (HNSW)
 
@@ -157,7 +152,7 @@ def retrieve(question, mode=None, kho=None, reference_date=None, top_k=None, kho
             "source": p.payload.get("source"),
             "text": p.payload["text"],
             "payload": p.payload,
-            "retrieval_score": float(p.score),  # dense: cosine | hybrid: diem RRF (khong phai cosine)
+            "retrieval_score": float(p.score),  # diem RRF (khong phai cosine); chi con mot nhanh thi la diem cua nhanh do
             "rerank_score": None,
         }
         for p in res.points
@@ -171,30 +166,10 @@ def rerank(question, hits, top_k=None):
     return [{**h, "rerank_score": s} for h, s in ranked[:top_k or cfg.TOP_K_RERANK]]
 
 
-def _check_mode(mode):
-    mode = mode or cfg.RAG_MODE
-    if mode not in cfg.RAG_MODES:
-        raise ValueError(f"mode phai la mot trong {cfg.RAG_MODES}, nhan duoc '{mode}'")
-    return mode
-
-
-def _relevant(hit, mode):
-    """Nguong tuong dong theo tung mode (xem config.SCORE_THRESHOLD / RERANK_MIN_SCORE)."""
-    if mode == "dense":
-        return hit["retrieval_score"] >= cfg.SCORE_THRESHOLD
-    if mode == "hybrid_rerank":
-        return hit["rerank_score"] >= cfg.RERANK_MIN_SCORE
-    return True
-
-
 def build_messages(question, hits, history=None):
-    """`history`: [(role, text)] cua cac luot truoc (session); chi vao prompt khi GUARD_ENABLED (prompt cu khong co khai niem nay)."""
-    if cfg.GUARD_ENABLED:
-        user = guard.build_user_message(question, hits, history)
-        return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
-    context = "\n\n".join(f"[Đoạn {i}] Tài liệu: {h['source']}\n{h['text']}" for i, h in enumerate(hits, 1))
-    user = f"Các đoạn trích:\n\n{context}\n\nCâu hỏi: {question}"
-    return [{"role": "system", "content": BASE_SYSTEM_PROMPT}, {"role": "user", "content": user}]
+    """`history`: [(role, text)] cua cac luot truoc (session)."""
+    user = guard.build_user_message(question, hits, history)
+    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
 
 def generate_answer(question, hits, history=None):
@@ -206,25 +181,23 @@ def generate_answer_stream(question, hits, history=None):
     return guard.vet_stream(groq_client.chat_stream(build_messages(question, hits, history)))
 
 
-def find_hits(question, top_k=None, mode=None, kho=None, reference_date=None, khoa=None, loai_van_ban=None):
-    """Truy van + rerank + loc nguong: cac doan se dua vao LLM. Rong = cau hoi ngoai pham vi tai lieu.
-    QUERY_REWRITE_ENABLED (chi hybrid / hybrid_rerank, vi mode dense loc theo cosine): Qwen viet lai `question`, dense + sparse cua ca
-    hai cau vao MOT lan RRF; rerank van cham theo `question` goc, nen cau viet lai chi mo rong ung vien, khong doi tieu chi."""
-    mode = _check_mode(mode)
+def find_hits(question, top_k=None, kho=None, reference_date=None, khoa=None, loai_van_ban=None):
+    """Truy van hybrid + rerank + loc nguong (RERANK_MIN_SCORE): cac doan se dua vao LLM. Rong = cau hoi ngoai pham vi tai lieu.
+    Qwen viet lai `question` (query_rewrite.rewrite), dense + bm25 cua ca hai cau vao MOT lan RRF; rerank van cham theo `question`
+    goc, nen cau viet lai chi mo rong ung vien, khong doi tieu chi."""
     top_k = top_k or cfg.TOP_K_RERANK
-    alt = query_rewrite.rewrite(question) if cfg.QUERY_REWRITE_ENABLED and mode != "dense" else None
-    hits = retrieve(question, mode, kho, reference_date, khoa=khoa, loai_van_ban=loai_van_ban, alt_question=alt)
-    if hits and mode == "hybrid_rerank":
-        hits = rerank(question, hits, top_k)
-    return [h for h in hits[:top_k] if _relevant(h, mode)]
+    alt = query_rewrite.rewrite(question)
+    hits = retrieve(question, kho, reference_date, khoa=khoa, loai_van_ban=loai_van_ban, alt_question=alt)
+    hits = rerank(question, hits, top_k) if hits else []
+    return [h for h in hits if h["rerank_score"] >= cfg.RERANK_MIN_SCORE]
 
 
-def ask(question, top_k=None, mode=None, kho=None, reference_date=None, khoa=None, loai_van_ban=None,
+def ask(question, top_k=None, kho=None, reference_date=None, khoa=None, loai_van_ban=None,
         search_query=None, history=None):
     """Tra ve (answer, hits, in_scope). Khong con doan nao sau loc/nguong -> khong goi Groq, hits rong.
     Guard dau ra chan cau tra loi -> (GUARD_REFUSAL_ANSWER, [], False).
     `search_query` (cau doc lap do router viet lai) dung de encode / truy van / rerank; prompt tra loi van mang `question` goc."""
-    hits = find_hits(search_query or question, top_k, mode, kho, reference_date, khoa, loai_van_ban)
+    hits = find_hits(search_query or question, top_k, kho, reference_date, khoa, loai_van_ban)
     if not hits:
         return NO_RESULT_ANSWER, [], False
     answer = generate_answer(question, hits, history)
@@ -241,7 +214,6 @@ def main():
 
     parser = argparse.ArgumentParser(description="Hoi dap RAG hybrid")
     parser.add_argument("question", nargs="*", help="cau hoi; bo trong de nhap tuong tac")
-    parser.add_argument("--mode", choices=cfg.RAG_MODES, default=None, help=f"mac dinh: {cfg.RAG_MODE}")
     parser.add_argument("--kho", default=None, help="chi tim trong kho nay")
     parser.add_argument("--khoa", type=int, default=None, help="khoa cua sinh vien (vd 2024): loc van ban ap dung cho khoa nay")
     parser.add_argument(
@@ -258,10 +230,9 @@ def main():
     for question in questions:
         if not question:
             continue
-        answer, hits, _ = ask(question, mode=args.mode, kho=args.kho, reference_date=args.reference_date, khoa=args.khoa)
+        answer, hits, _ = ask(question, kho=args.kho, reference_date=args.reference_date, khoa=args.khoa)
         for h in hits:
-            score = h["rerank_score"] if h["rerank_score"] is not None else h["retrieval_score"]
-            print(f"Nguon: {h['source']} | score: {score:.4f}")
+            print(f"Nguon: {h['source']} | score: {h['rerank_score']:.4f}")
         print(answer)
 
 

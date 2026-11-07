@@ -80,9 +80,6 @@ ACADEMIC_TTS_RULES: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\[([^\]]+)\]\([^)]+\)"), r"\1"),
 ]
 
-ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".mp4", ".webm", ".ogg", ".flac", ".mpeg", ".mpga"}
-
-
 def _has_valid_audio_signature(data: bytes) -> bool:
     """Kiểm tra Magic Bytes nhận diện các định dạng container âm thanh phổ biến."""
     if len(data) < 4:

@@ -5,10 +5,10 @@ với routing key `embed.jobs`. Consumer này lắng nghe queue `ai-service.embe
 tải văn bản từ file-service qua HTTP, rồi gọi embed_service.embed_document().
 
 Biến môi trường:
-    RABBITMQ_URL     amqp://user:pass@host:5672/   (bắt buộc nếu dùng RabbitMQ)
+    RABBITMQ_URL     amqp://user:pass@host:5672/   (mặc định amqp://guest:guest@localhost:5672/)
     FILE_SERVICE_URL http://file-service:8080        (để tải văn bản)
 
-Nếu RABBITMQ_URL không được cấu hình thì consumer không khởi động (graceful degradation).
+Broker chưa lên hoặc mất kết nối thì consumer tự thử lại sau RETRY_DELAY giây.
 """
 import json
 import logging
@@ -23,7 +23,7 @@ from . import embed_service
 
 log = logging.getLogger("uvicorn.error")
 
-RABBITMQ_URL = os.environ.get("RABBITMQ_URL", "")
+RABBITMQ_URL = os.environ.get("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 FILE_SERVICE_URL = os.environ.get("FILE_SERVICE_URL", "http://localhost:8080")
 
 EMBED_EXCHANGE = "file-service.embed"
@@ -141,10 +141,7 @@ def _run_consumer():
 
 
 def start_consumer():
-    """Khởi động consumer trong daemon thread nếu RABBITMQ_URL được cấu hình."""
-    if not RABBITMQ_URL:
-        log.info("RABBITMQ_URL chưa cấu hình, bỏ qua RabbitMQ embed consumer.")
-        return
+    """Khởi động consumer trong daemon thread."""
     t = threading.Thread(target=_run_consumer, name="embed-consumer", daemon=True)
     t.start()
     log.info("RabbitMQ embed consumer thread đã khởi động.")

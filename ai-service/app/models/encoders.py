@@ -1,6 +1,7 @@
-"""Nap BGE-M3 (dense + sparse, FlagEmbedding) va jina-reranker-v3.5 (transformers) mot lan moi tien trinh.
+"""Nap BGE-M3 (dense, sentence-transformers) va jina-reranker-v3.5 (transformers) mot lan moi tien trinh.
 
-Ingest (index_qdrant.py) va truy van (query_model.py) deu di qua encode_texts() de dung cung mot duong ma hoa.
+Nhanh lexical la BM25 (bm25.py, chay CPU).
+Ingest (embed_service.py) va truy van (query_model.py) deu di qua encode_texts() de dung cung mot duong ma hoa.
 Reranker dung ban sao da duyet cua modeling.py (jina_reranker_modeling.py) nen khong chay code tai ve luc chay.
 """
 import os
@@ -10,9 +11,8 @@ import scipy.linalg  # noqa: F401  (must load BLAS before torch to avoid a Windo
 import sklearn.metrics.pairwise  # noqa: F401
 
 import torch
-from FlagEmbedding import BGEM3FlagModel
 from huggingface_hub import snapshot_download
-from qdrant_client import models
+from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer
 
 from .. import config as cfg
@@ -31,11 +31,7 @@ def _device(configured):
 
 
 def _embedder_path():
-    """Thu muc local cua BGE-M3 chi gom file can cho suy luan.
-
-    FlagEmbedding tu snapshot_download ca repo (them ~2GB ONNX/anh) va neu thieu sparse_linear.pt thi am tham
-    khoi tao NGAU NHIEN dau sparse -> trong so lexical vo nghia. Tai san loai file thua va bao loi neu thieu.
-    """
+    """Thu muc local cua BGE-M3 chi gom file can cho suy luan (SentenceTransformer tu tai ca repo, them ~2GB ONNX/anh)."""
     if os.path.exists(cfg.EMBED_MODEL):
         path = cfg.EMBED_MODEL
     else:
@@ -43,9 +39,6 @@ def _embedder_path():
             cfg.EMBED_MODEL,
             ignore_patterns=["onnx/*", "imgs/*", "*.jpg", "flax_model.msgpack", "rust_model.ot", "tf_model.h5"],
         )
-    for name in ("sparse_linear.pt", "colbert_linear.pt"):
-        if not os.path.exists(os.path.join(path, name)):
-            raise FileNotFoundError(f"Thieu {name} trong {path}: dau sparse cua BGE-M3 se bi khoi tao ngau nhien")
 
     # ── Tự động tạo model.safetensors nếu chỉ có pytorch_model.bin (Tránh CVE-2025-32434 check) ──
     bin_file = os.path.join(path, "pytorch_model.bin")
@@ -61,14 +54,12 @@ def get_embedder():
     global _embedder
     with _load_lock:
         if _embedder is None:
-            _embedder = BGEM3FlagModel(
-                _embedder_path(),
-                use_fp16=cfg.USE_FP16,
-                devices=_device(cfg.EMBED_DEVICE),
-                batch_size=cfg.EMBED_BATCH_SIZE,
-                query_max_length=cfg.EMBED_MAX_LENGTH,
-                passage_max_length=cfg.EMBED_MAX_LENGTH,
-            )
+            device = _device(cfg.EMBED_DEVICE)
+            # Nap thang fp16, khong nap fp32 roi .half(): dinh VRAM luc khoi dong la 1.1GB thay vi 2.8GB (do tren RTX 3050 4GB)
+            kwargs = {"dtype": torch.float16} if cfg.USE_FP16 and device.startswith("cuda") else {}
+            model = SentenceTransformer(_embedder_path(), device=device, model_kwargs=kwargs)
+            model.max_seq_length = cfg.EMBED_MAX_LENGTH
+            _embedder = model
         return _embedder
 
 
@@ -123,27 +114,14 @@ def _retry_on_oom(run, batch_size):
 
 
 def encode_texts(texts, batch_size=None):
-    """Ma hoa bang MOT lan encode(): tra ve (dense_vecs [n, 1024] da chuan hoa, lexical_weights list[dict])."""
+    """Ma hoa dense bang BGE-M3: tra ve ndarray [n, 1024] da chuan hoa (cosine)."""
     embedder = get_embedder()
 
     def run(bs):
-        return embedder.encode(
-            texts,
-            batch_size=bs,
-            max_length=cfg.EMBED_MAX_LENGTH,
-            return_dense=True,
-            return_sparse=True,
-        )
+        return embedder.encode(texts, batch_size=bs, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False)
 
     with _infer_lock:
-        out = _retry_on_oom(run, batch_size or cfg.EMBED_BATCH_SIZE)
-    return out["dense_vecs"], out["lexical_weights"]
-
-
-def to_sparse_vector(lexical_weights):
-    """{token_id(str): weight} cua BGE-M3 -> SparseVector cua Qdrant (chi so tang dan)."""
-    items = sorted((int(k), float(v)) for k, v in lexical_weights.items())
-    return models.SparseVector(indices=[k for k, _ in items], values=[v for _, v in items])
+        return _retry_on_oom(run, batch_size or cfg.EMBED_BATCH_SIZE)
 
 
 def _truncate(text):

@@ -390,7 +390,7 @@ def apply_policy(decision, question, facts, previous_was_clarify):
         return rag
     if intent == "clarify":
         asks = decision.missing  # clarify khong co `missing` thi khong co cau hoi co dinh de dung -> rag
-        if (asks and cfg.ROUTER_CLARIFY_ENABLED and conf >= cfg.ROUTER_CLARIFY_CONFIDENCE and not previous_was_clarify
+        if (asks and conf >= cfg.ROUTER_CLARIFY_CONFIDENCE and not previous_was_clarify
                 and not (asks == "audience" and facts.get("khoa"))):
             return Action(Intent.CLARIFY, _CLARIFY_TEXT[asks](), in_scope=True)
         return rag

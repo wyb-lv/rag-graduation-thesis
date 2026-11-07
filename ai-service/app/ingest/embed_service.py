@@ -4,16 +4,16 @@
   - API endpoint POST /embed  (FE hoặc admin trigger thủ công)
   - RabbitMQ consumer: nhận job từ file-service sau khi OCR xong
 
-Mỗi tài liệu được làm sạch và chia chunk theo Chương/Điều/khoản (xem chunker.py), encode bằng BGE-M3 (dense + sparse),
-rồi upsert vào Qdrant collection `quy_dinh_hybrid`.
+Mỗi tài liệu được làm sạch và chia chunk theo Chương/Điều/khoản (xem chunker.py), encode bằng BGE-M3 (dense, sentence-transformers) và tính vector BM25 (bm25.py),
+rồi upsert vào Qdrant collection `quy_dinh_hybrid_v2`.
 """
 import logging
-import re
 import uuid
 from typing import Optional
 
 from qdrant_client import QdrantClient, models
 
+from .. import bm25
 from .. import config as cfg
 from .. import qdrant_setup
 from ..models import encoders
@@ -83,10 +83,10 @@ def embed_document(
     total_upserted = 0
     for batch_start in range(0, len(paragraphs), cfg.UPSERT_BATCH_SIZE):
         batch = paragraphs[batch_start: batch_start + cfg.UPSERT_BATCH_SIZE]
-        dense_vecs, lexical_weights = encoders.encode_texts(batch)
+        dense_vecs = encoders.encode_texts(batch)
 
         points = []
-        for i, (para, dvec, lex) in enumerate(zip(batch, dense_vecs, lexical_weights)):
+        for i, (para, dvec) in enumerate(zip(batch, dense_vecs)):
             payload = {
                 "document_id": document_id,
                 "source": source,
@@ -105,10 +105,7 @@ def embed_document(
             if hieu_luc_den:
                 payload[cfg.FIELD_HIEU_LUC_DEN] = hieu_luc_den
 
-            vector = {
-                cfg.DENSE_VECTOR_NAME: dvec.tolist(),
-                cfg.SPARSE_VECTOR_NAME: encoders.to_sparse_vector(lex),
-            }
+            vector = {cfg.DENSE_VECTOR_NAME: dvec.tolist(), **bm25.doc_vectors(para)}
 
             points.append(models.PointStruct(id=str(uuid.uuid4()), vector=vector, payload=payload))
 
