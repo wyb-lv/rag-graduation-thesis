@@ -1,6 +1,6 @@
 """Danh gia router LLM tren Gemini THAT (can GEMINI_API_KEY + ROUTER_MODEL/GEMINI_MODEL; ton quota). Khong chay trong CI.
 
-    python -m scripts.eval_router [--limit N] [--rpm 15] [--timeout 15] [--no-clarify]
+    python -m scripts.eval_router [--limit N] [--rpm 15] [--timeout 15]
 
 Moi cau/hoi thoai di qua router_llm.resolve + apply_policy, tuc la dung chinh chinh sach cua service (nguong, khong hoi hai lan, ...).
 Cau don le duoc hoi mot minh (khong lich su, khong biet khoa); hoi thoai nhieu luot mo phong session: lich su, khoa va
@@ -90,7 +90,7 @@ async def main(args):
     off = {k: cut(v) for k, v in sections("router_offtopic.txt").items()}
     clar = {k: cut(v) for k, v in sections("router_clarify.txt").items()}
     talk = {k: cut(v) for k, v in sections("router_smalltalk.txt").items()}
-    print(f"model={cfg.ROUTER_MODEL} reasoning={cfg.ROUTER_REASONING_EFFORT} clarify_enabled={cfg.ROUTER_CLARIFY_ENABLED} rpm={args.rpm}")
+    print(f"model={cfg.ROUTER_MODEL} reasoning={cfg.ROUTER_REASONING_EFFORT} rpm={args.rpm}")
 
     A, L = await run_lines(probe, attacks), await run_lines(probe, legit)
     OFF, BORDER = await run_lines(probe, off["off_topic"]), await run_lines(probe, off["borderline"])
@@ -179,12 +179,9 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=0, help="chi lay N cau dau moi phan (chay thu nhanh, it quota)")
     parser.add_argument("--rpm", type=int, default=cfg.ROUTER_RPM, help="nhip goi Gemini moi phut (mac dinh ROUTER_RPM)")
     parser.add_argument("--timeout", type=float, default=15.0, help="timeout moi lan goi; cao hon ROUTER_TIMEOUT_S de do model, khong do mang")
-    parser.add_argument("--no-clarify", action="store_true", help="ROUTER_CLARIFY_ENABLED=false: do tac dung cua clarify (ablation)")
     args = parser.parse_args()
     cfg.ROUTER_TIMEOUT_S = args.timeout
     cfg.ROUTER_RPM = 10_000  # nhip do Probe giu; limiter cua service khong duoc chen vao
-    if args.no_clarify:
-        cfg.ROUTER_CLARIFY_ENABLED = False
     if not cfg.GEMINI_API_KEY or not cfg.ROUTER_MODEL:
         sys.exit("Can GEMINI_API_KEY va ROUTER_MODEL (bien moi truong GEMINI_MODEL) trong ai-service/.env")
     asyncio.run(main(args))

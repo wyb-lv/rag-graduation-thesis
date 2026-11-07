@@ -1,10 +1,13 @@
+import asyncio
 import json
+import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app import api
+from app import api, session
 from app.llm import groq_client
 from app.rag import query_model as qm
 
@@ -45,10 +48,18 @@ def test_stream_sends_sources_then_deltas_then_done(client, monkeypatch):
     assert done == "[DONE]"
 
 
+def test_clients_that_still_send_the_removed_mode_field_are_ignored(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(qm, "find_hits", lambda question, **kw: seen.append(kw) or [])
+    resp = client.post("/ask/stream", json={"question": "Bao nhieu nguyen vong?", "mode": "dense"})
+    assert resp.status_code == 200 and "mode" not in seen[0]
+
+
 def test_stream_out_of_scope_skips_llm(client, monkeypatch):
     monkeypatch.setattr(qm, "find_hits", lambda question, **kw: [])
     monkeypatch.setattr(qm, "generate_answer_stream", lambda *a: pytest.fail("khong duoc goi LLM"))
     sources, delta, done = events(client.post("/ask/stream", json={"question": "Thoi tiet?"}))
+    assert session.parse_id(sources.pop("session_id")) is not None  # luon co session_id (server tao khi client khong gui)
     assert sources == {"event": "sources", "in_scope": False, "sources": []}
     assert delta == {"event": "delta", "text": qm.NO_RESULT_ANSWER}
     assert done == "[DONE]"
@@ -80,8 +91,6 @@ def test_stream_retrieval_failure_is_502_before_streaming(client, monkeypatch):
 
 def test_startup_warms_up_embedder_and_reranker(monkeypatch):
     calls = []
-    monkeypatch.setattr(api.cfg, "WARMUP", True)
-    monkeypatch.setattr(api.cfg, "RAG_MODE", "hybrid_rerank")
     monkeypatch.setattr(api.qdrant_setup, "validate_legs", lambda client: None)  # lifespan không chạm Qdrant thật
     monkeypatch.setattr(api.encoders, "encode_texts", lambda texts: calls.append("encode"))
     monkeypatch.setattr(api.encoders, "rerank_scores", lambda q, passages: calls.append("rerank"))
@@ -95,24 +104,45 @@ def test_startup_warms_up_embedder_and_reranker(monkeypatch):
     assert calls == ["encode", "rerank"]
 
 
-def test_warmup_skips_reranker_when_mode_does_not_rerank(monkeypatch):
-    calls = []
-    monkeypatch.setattr(api.cfg, "RAG_MODE", "hybrid")
-    monkeypatch.setattr(api.encoders, "encode_texts", lambda texts: calls.append("encode"))
-    monkeypatch.setattr(api.encoders, "rerank_scores", lambda q, passages: calls.append("rerank"))
-    monkeypatch.setitem(api._warmup, "status", "pending")
-    api.warm_up()
-    assert calls == ["encode"] and api._warmup["status"] == "ready"
-
-
 def test_warmup_failure_is_reported_not_raised(monkeypatch):
     def oom(texts):
         raise RuntimeError("CUDA out of memory")
 
     monkeypatch.setattr(api.encoders, "encode_texts", oom)
     monkeypatch.setitem(api._warmup, "status", "pending")
+    api._warmed.clear()
     api.warm_up()
     assert api._warmup["status"] == "error"
+    assert api._warmed.is_set()  # that bai cung tha cac request dang doi
+
+
+def _begin_while_warming(monkeypatch, release_after=None):
+    """Chay api._begin khi warm-up dang chay; `release_after` giay sau thi warm-up xong. Tra ve thoi gian _begin phai doi."""
+    async def no_session():  # khong nap LlamaIndex: bai do thoi gian cho warm-up, khong do session
+        return SimpleNamespace(open=lambda key, reset=False: _none())
+
+    async def _none():
+        return None
+
+    monkeypatch.setattr(session, "store", no_session)
+    api._warmed.clear()
+    if release_after is not None:
+        threading.Timer(release_after, api._warmed.set).start()
+    start = time.perf_counter()
+    try:
+        asyncio.run(api._begin(SimpleNamespace(question="hoi", khoa=None, kho=None, session_id=None, reset=False), SimpleNamespace(headers={})))
+    finally:
+        api._warmed.set()
+    return time.perf_counter() - start
+
+
+def test_request_waits_for_warmup_before_it_starts(monkeypatch):
+    assert _begin_while_warming(monkeypatch, release_after=0.2) >= 0.19
+
+
+def test_request_stops_waiting_after_the_cap(monkeypatch):
+    monkeypatch.setattr(api.cfg, "WARMUP_WAIT_S", 0.1)
+    assert 0.09 <= _begin_while_warming(monkeypatch) < 2  # warm-up ket: van di tiep, khong treo
 
 
 def test_stream_missing_env_is_500(client, monkeypatch):

@@ -1,12 +1,16 @@
 """Luu tru hoi thoai trong MongoDB. Nhom dau: api.py voi kho gia trong RAM (khong cham mang). Nhom cuoi: conversations.py voi MongoDB that
-(marker `integration`; TEST_MONGODB_URI, mac dinh mongodb://localhost:27017; khong ket noi duoc thi bo qua)."""
+(marker `integration`; TEST_MONGODB_URI, khong thi MONGO_USER / MONGO_PASSWORD trong .env goc, khong thi mongodb://localhost:27017;
+khong ket noi duoc thi bo qua)."""
 import asyncio
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import quote_plus
 
 import pytest
+from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 
 from app import api, conversations, session
@@ -24,9 +28,6 @@ U1, U2 = {"X-User-Id": "u1"}, {"X-User-Id": "u2"}
 @pytest.fixture
 def archive(monkeypatch):
     """Kho gia co cung hinh dang tra ve voi conversations.py; `db.fail` mo phong MongoDB chet. Pipeline RAG gia: tra loi "ANS-1"."""
-    monkeypatch.setattr(cfg, "CONVERSATIONS_ENABLED", True)
-    monkeypatch.setattr(cfg, "SESSION_ENABLED", True)
-    monkeypatch.setattr(session, "_store", None)
     db = SimpleNamespace(docs={}, fail=False)
 
     def check():
@@ -118,16 +119,6 @@ def test_a_mongodb_outage_does_not_break_the_answer_and_only_the_error_class_is_
     assert "ConnectionError" in caplog.text and "SECRET" not in caplog.text and "CAU-HOI-RIENG" not in caplog.text
 
 
-@ENDPOINTS
-def test_nothing_is_archived_without_mongodb_uri_or_without_a_session(client, archive, monkeypatch, endpoint):
-    monkeypatch.setattr(cfg, "CONVERSATIONS_ENABLED", False)
-    ask(client, endpoint, "q")
-    monkeypatch.setattr(cfg, "CONVERSATIONS_ENABLED", True)
-    monkeypatch.setattr(cfg, "SESSION_ENABLED", False)  # khong co session_id thi khong co cuoc hoi thoai
-    assert client.post(endpoint, json={"question": "q"}).status_code == 200
-    assert archive.docs == {}
-
-
 # ---- Doc / xoa ----
 
 def test_list_needs_the_gateway_user_header_and_returns_only_that_users_conversations_newest_first(client, archive):
@@ -168,13 +159,6 @@ def test_delete_removes_the_archive_and_the_short_term_history_and_is_per_user(c
     assert client.delete(f"/conversations/{SID}", headers=U1).status_code == 404
 
 
-def test_endpoints_are_503_when_mongodb_is_not_configured(client, archive, monkeypatch):
-    monkeypatch.setattr(cfg, "CONVERSATIONS_ENABLED", False)
-    for call in (client.get("/conversations", headers=U1), client.get(f"/conversations/{SID}", headers=U1),
-                 client.delete(f"/conversations/{SID}", headers=U1)):
-        assert call.status_code == 503
-
-
 @pytest.mark.parametrize("call", ["list", "get", "delete"])
 def test_a_mongodb_outage_is_a_502_without_leaking_the_error(client, archive, caplog, call):
     archive.fail = True
@@ -194,9 +178,19 @@ async def _history(sid, user_id):
 
 # ---- MongoDB that ----
 
+def _test_mongo_uri():
+    """Mongo cua docker-compose bat xac thuc: lay MONGO_USER / MONGO_PASSWORD tu .env goc (cung nguon voi compose), khong ghi mat khau vao code."""
+    if uri := os.environ.get("TEST_MONGODB_URI"):
+        return uri
+    env = dotenv_values(Path(__file__).resolve().parents[2] / ".env")
+    if env.get("MONGO_USER") and env.get("MONGO_PASSWORD"):
+        return f"mongodb://{quote_plus(env['MONGO_USER'])}:{quote_plus(env['MONGO_PASSWORD'])}@localhost:{env.get('MONGO_HOST_PORT') or 27018}/?authSource=admin"  # cong publish cua compose, khong phai 27017
+    return "mongodb://localhost:27017"
+
+
 @pytest.fixture
 def mongo(monkeypatch):
-    monkeypatch.setattr(cfg, "MONGODB_URI", os.environ.get("TEST_MONGODB_URI", "mongodb://localhost:27017"))
+    monkeypatch.setattr(cfg, "MONGODB_URI", _test_mongo_uri())
     monkeypatch.setattr(cfg, "MONGODB_DB", "hsu_chatbot_test")
     monkeypatch.setattr(cfg, "MONGODB_TIMEOUT_MS", 1000)
     monkeypatch.setattr(conversations, "_collection", None)  # AsyncMongoClient gan voi event loop: moi test mot client

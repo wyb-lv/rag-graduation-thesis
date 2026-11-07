@@ -138,13 +138,9 @@ def test_check_output_catches_secrets(monkeypatch):
     assert guard.check_output("Điều 5 nói về khóa học và tên biến API_KEY không xuất hiện ở đây")
 
 
-def test_vet_answer_follows_the_mode(monkeypatch):
+def test_vet_answer_blocks_a_leak_and_passes_clean_text():
     assert not guard.vet_answer(f"x {CANARY}")
-    monkeypatch.setattr(cfg, "GUARD_MODE", "log_only")
-    assert guard.vet_answer(f"x {CANARY}")
-    monkeypatch.setattr(cfg, "GUARD_MODE", "enforce")
-    monkeypatch.setattr(cfg, "GUARD_ENABLED", False)
-    assert guard.vet_answer(f"x {CANARY}")
+    assert guard.vet_answer("Sinh viên được đăng ký 25 tín chỉ.")
 
 
 def test_stream_guard_catches_a_canary_split_across_two_deltas():
@@ -169,14 +165,9 @@ def test_stream_guard_checks_a_whole_cached_answer_delivered_as_one_big_delta():
         list(guard.vet_stream(iter(["x" * 5000 + f" {CANARY} " + "y" * 5000])))
 
 
-def test_stream_guard_passes_clean_text_unchanged_and_logs_only_in_log_only(monkeypatch):
+def test_stream_guard_passes_clean_text_unchanged():
     deltas = ["Sinh viên ", "được đăng ký ", "25 tín chỉ."]
     assert list(guard.vet_stream(iter(deltas))) == deltas
-    monkeypatch.setattr(cfg, "GUARD_MODE", "log_only")
-    assert list(guard.vet_stream(iter(["a ", CANARY, " b"]))) == ["a ", CANARY, " b"]
-    monkeypatch.setattr(cfg, "GUARD_ENABLED", False)
-    source = iter(["x"])
-    assert guard.vet_stream(source) is source
 
 
 # ---- Toc do ----

@@ -11,24 +11,14 @@ pytestmark = pytest.mark.integration
 TEXT = "Thí sinh được đăng ký tối đa 15 nguyện vọng theo quy chế tuyển sinh đại học năm 2026."
 
 
-def test_one_encode_call_returns_dense_1024_and_nonempty_sparse(monkeypatch):
+def test_encode_returns_normalized_dense_1024():
     embedder = encoders.get_embedder()
-    calls = []
-    real_encode = embedder.encode
-    monkeypatch.setattr(embedder, "encode", lambda *a, **k: calls.append(k) or real_encode(*a, **k))
+    assert type(embedder).__name__ == "SentenceTransformer" and embedder.max_seq_length == cfg.EMBED_MAX_LENGTH
 
-    dense, lexical = encoders.encode_texts([TEXT])
+    dense = encoders.encode_texts([TEXT])
 
-    assert len(calls) == 1
-    assert calls[0]["return_dense"] is True and calls[0]["return_sparse"] is True
     assert dense.shape == (1, cfg.EMBED_DIM) == (1, 1024)
     assert abs(float(np.linalg.norm(dense[0].astype("float32"))) - 1.0) < 1e-2  # cosine -> da chuan hoa
-    assert len(lexical) == 1 and len(lexical[0]) > 0
-
-    sparse = encoders.to_sparse_vector(lexical[0])
-    assert len(sparse.indices) == len(sparse.values) > 0
-    assert all(isinstance(i, int) for i in sparse.indices) and sparse.indices == sorted(sparse.indices)
-    assert all(isinstance(v, float) and v > 0 for v in sparse.values)
 
 
 def test_models_are_loaded_once_per_process():
@@ -37,10 +27,9 @@ def test_models_are_loaded_once_per_process():
 
 
 def test_encoding_is_deterministic_between_ingest_and_query():
-    first_dense, first_lex = encoders.encode_texts([TEXT])
-    second_dense, second_lex = encoders.encode_texts([TEXT, "câu khác"])
-    assert np.allclose(first_dense[0].astype("float32"), second_dense[0].astype("float32"), atol=1e-2)
-    assert first_lex[0].keys() == second_lex[0].keys()
+    first = encoders.encode_texts([TEXT])
+    second = encoders.encode_texts([TEXT, "câu khác"])
+    assert np.allclose(first[0].astype("float32"), second[0].astype("float32"), atol=1e-2)
 
 
 QUESTION = "Thí sinh được đăng ký tối đa bao nhiêu nguyện vọng?"

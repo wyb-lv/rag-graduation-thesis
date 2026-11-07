@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from qdrant_client import models
 
+from app import bm25
 from app import config as cfg
 from app.models import encoders
 from app.rag import query_model as qm
@@ -27,14 +28,13 @@ def point(i, score=0.9, text=None):
 def stub(monkeypatch):
     """Thay encode, Qdrant va Groq bang ban gia; tra ve doi tuong de test chinh gia tri."""
     state = SimpleNamespace(
-        lexical={"10": 0.5, "20": 0.25},
         qdrant=FakeQdrant([point(i, 1 - i / 100) for i in range(8)]),
         groq_calls=[],
     )
     monkeypatch.setattr(
         encoders,
         "encode_texts",
-        lambda texts, batch_size=None: (np.ones((len(texts), 1024), "float32"), [state.lexical]),
+        lambda texts, batch_size=None: np.ones((len(texts), 1024), "float32"),
     )
     monkeypatch.setattr(qm, "get_qdrant", lambda: state.qdrant)
     monkeypatch.setattr(
@@ -43,43 +43,23 @@ def stub(monkeypatch):
     return state
 
 
-def test_dense_mode_queries_named_dense_vector_only(stub):
-    qm.retrieve("cau hoi", mode="dense")
+def test_retrieve_prefetches_dense_and_bm25_with_rrf(stub):
+    qm.retrieve("cau hoi")
     collection, kw = stub.qdrant.calls[0]
     assert collection == cfg.QDRANT_COLLECTION
-    assert kw["using"] == "dense" and "prefetch" not in kw
-    assert kw["limit"] == 20 and len(kw["query"]) == 1024
-
-
-def test_hybrid_mode_prefetches_dense_and_sparse_with_rrf(stub):
-    qm.retrieve("cau hoi", mode="hybrid")
-    _, kw = stub.qdrant.calls[0]
-    dense, sparse = kw["prefetch"]
+    dense, lexical = kw["prefetch"]
     assert (dense.using, dense.limit) == ("dense", 20)
-    assert (sparse.using, sparse.limit) == ("sparse", 20)
-    assert sparse.query.indices == [10, 20] and sparse.query.values == [0.5, 0.25]
+    assert (lexical.using, lexical.limit) == ("bm25", 20)
+    assert lexical.query == bm25.bm25_query_vector("cau hoi")  # token am tiet + bigram, IDF do Qdrant nhan
     assert kw["query"] == models.FusionQuery(fusion=models.Fusion.RRF)
     assert kw["limit"] == 20
-    assert dense.filter is not None and sparse.filter is not None  # filter nam trong tung prefetch
+    assert dense.filter is not None and lexical.filter is not None  # filter nam trong tung prefetch
 
 
-def test_empty_sparse_query_falls_back_to_dense_prefetch_only(stub):
-    stub.lexical = {}
-    qm.retrieve("cau hoi", mode="hybrid")
+def test_empty_bm25_query_falls_back_to_dense_prefetch_only(stub):
+    qm.retrieve("?!...")  # cau hoi toan dau cau: khong co token bm25
     _, kw = stub.qdrant.calls[0]
     assert kw["using"] == "dense" and "prefetch" not in kw
-
-
-def test_unknown_mode_is_rejected(stub):
-    with pytest.raises(ValueError):
-        qm.retrieve("cau hoi", mode="khong_co")
-    assert stub.qdrant.calls == []
-
-
-def test_mode_defaults_to_config(stub, monkeypatch):
-    monkeypatch.setattr(cfg, "RAG_MODE", "dense")
-    qm.retrieve("cau hoi")
-    assert stub.qdrant.calls[0][1]["using"] == "dense"
 
 
 def test_filter_has_kho_and_effective_date_range():
@@ -117,14 +97,14 @@ def test_rerank_returns_exactly_top_5_ordered_by_score(monkeypatch):
 
 def test_no_candidates_returns_no_result_without_calling_groq(stub):
     stub.qdrant.points = []
-    answer, hits, in_scope = qm.ask("cau hoi", mode="hybrid_rerank")
+    answer, hits, in_scope = qm.ask("cau hoi")
     assert (answer, hits, in_scope) == (qm.NO_RESULT_ANSWER, [], False)
     assert stub.groq_calls == []
 
 
-def test_ask_hybrid_rerank_cites_top5_chunks(stub, monkeypatch):
+def test_ask_cites_the_top5_reranked_chunks(stub, monkeypatch):
     monkeypatch.setattr(encoders, "rerank_scores", lambda q, passages: [0.9 - i / 10 for i in range(len(passages))])
-    answer, hits, in_scope = qm.ask("cau hoi", mode="hybrid_rerank")
+    answer, hits, in_scope = qm.ask("cau hoi")
     assert in_scope and answer.startswith("tra loi")
     assert len(hits) == 5
     assert [h["rerank_score"] for h in hits] == sorted((h["rerank_score"] for h in hits), reverse=True)
@@ -135,7 +115,7 @@ def test_ask_hybrid_rerank_cites_top5_chunks(stub, monkeypatch):
 
 def test_rerank_score_below_floor_counts_as_no_result(stub, monkeypatch):
     monkeypatch.setattr(encoders, "rerank_scores", lambda q, passages: [cfg.RERANK_MIN_SCORE - 0.01] * len(passages))
-    answer, hits, in_scope = qm.ask("cau hoi", mode="hybrid_rerank")
+    answer, hits, in_scope = qm.ask("cau hoi")
     assert (answer, hits, in_scope) == (qm.NO_RESULT_ANSWER, [], False)
     assert stub.groq_calls == []
 
@@ -145,27 +125,8 @@ def test_rerank_floor_keeps_only_chunks_at_or_above_min_score(stub, monkeypatch)
     scores = [0.35, 0.12, 0.099, -0.04, -0.1, 0.02, 0.0, -0.2]
     monkeypatch.setattr(cfg, "RERANK_MIN_SCORE", 0.1)
     monkeypatch.setattr(encoders, "rerank_scores", lambda q, passages: scores[:len(passages)])
-    _, hits, in_scope = qm.ask("cau hoi", mode="hybrid_rerank")
+    _, hits, in_scope = qm.ask("cau hoi")
     assert in_scope and [h["rerank_score"] for h in hits] == [0.35, 0.12]
-
-
-def test_dense_mode_applies_cosine_threshold(stub):
-    stub.qdrant.points = [point(0, 0.3), point(1, 0.2)]
-    assert qm.ask("cau hoi", mode="dense")[2] is False
-    assert stub.groq_calls == []
-    stub.qdrant.points = [point(0, 0.8), point(1, 0.2)]
-    _, hits, in_scope = qm.ask("cau hoi", mode="dense")
-    assert in_scope and [h["id"] for h in hits] == [0]
-
-
-def test_hybrid_mode_skips_rerank_and_keeps_top_k(stub, monkeypatch):
-    def boom(*a, **k):
-        raise AssertionError("hybrid khong duoc goi reranker")
-
-    monkeypatch.setattr(encoders, "rerank_scores", boom)
-    _, hits, _ = qm.ask("cau hoi", mode="hybrid", top_k=3)
-    assert [h["id"] for h in hits] == [0, 1, 2]
-    assert all(h["rerank_score"] is None for h in hits)
 
 
 def test_prompt_demands_citations_and_admits_missing_answer():

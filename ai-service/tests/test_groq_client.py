@@ -1,4 +1,5 @@
 import groq
+import httpcore
 import httpx
 import pytest
 
@@ -55,7 +56,6 @@ def settings(monkeypatch, tmp_path):
     monkeypatch.setattr(cfg, "GROQ_QWEN_MODEL", "qwen/test-model")
     monkeypatch.setattr(cfg, "GROQ_API_KEY", "key")
     monkeypatch.setattr(cfg, "GROQ_REASONING_EFFORT", "none")
-    monkeypatch.setattr(cfg, "GROQ_CACHE_ENABLED", True)
     monkeypatch.setattr(cfg, "GROQ_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(cfg, "GROQ_MAX_RETRIES", 3)
     monkeypatch.setattr(cfg, "GROQ_BACKOFF_BASE", 2)
@@ -132,6 +132,37 @@ def test_error_after_retry_limit_is_clear():
     assert len(sleeps) == cfg.GROQ_MAX_RETRIES  # khong ngu them sau lan thu cuoi
 
 
+def test_timeout_is_forwarded_to_the_request_only_when_given():
+    client = FakeClient([Resp("a"), Resp("b")])
+    limiter, clock = make_limiter()
+    groq_client.chat(MESSAGES, client=client, limiter=limiter, sleep=clock.sleep, timeout=5)
+    groq_client.chat([{"role": "user", "content": "khac"}], client=client, limiter=limiter, sleep=clock.sleep)  # khac MESSAGES: tranh cache
+    assert client.calls[0]["timeout"] == httpx.Timeout(5, connect=cfg.GROQ_CONNECT_TIMEOUT)  # buoc ket noi van ngan
+    assert "timeout" not in client.calls[1]
+
+
+def test_client_cuts_slow_connects_and_reconnects_but_never_resends_a_request(monkeypatch):
+    """Mang container roi goi SYN toi Groq: ket noi bi cat o GROQ_CONNECT_TIMEOUT va thu lai GROQ_CONNECT_RETRIES lan o tang transport."""
+    from httpcore._backends.sync import SyncBackend
+
+    attempts = []
+
+    def lose_syn(self, *args, **kwargs):
+        attempts.append(1)
+        raise httpcore.ConnectTimeout("goi SYN bi roi")
+
+    monkeypatch.setattr(SyncBackend, "connect_tcp", lose_syn)
+    monkeypatch.setattr(SyncBackend, "sleep", lambda self, seconds: None)
+    monkeypatch.setattr(groq_client, "_client", None)
+    client = groq_client.get_client()
+    assert client.timeout == httpx.Timeout(cfg.GROQ_TIMEOUT, connect=cfg.GROQ_CONNECT_TIMEOUT)
+    pool = client._client._transport._pool  # ket noi duoc giu song lau de cau hoi sau dung lai, khong bat tay lai qua duong roi goi
+    assert pool._keepalive_expiry == cfg.GROQ_KEEPALIVE_S
+    with pytest.raises(groq.APITimeoutError):
+        client.chat.completions.create(model="m", messages=MESSAGES)
+    assert len(attempts) == cfg.GROQ_CONNECT_RETRIES + 1
+
+
 def test_retries_zero_makes_one_attempt_without_sleeping_and_says_so():
     client = FakeClient([rate_limit_error(), Resp("khong duoc toi")])
     limiter, _ = make_limiter()
@@ -176,14 +207,6 @@ def test_cache_key_depends_on_model_and_prompt(monkeypatch):
     assert groq_client.cache_key("m1", MESSAGES[:1]) != base
     monkeypatch.setattr(cfg, "GROQ_REASONING_EFFORT", "high")
     assert groq_client.cache_key("m1", MESSAGES) != base
-
-
-def test_cache_can_be_disabled(monkeypatch):
-    monkeypatch.setattr(cfg, "GROQ_CACHE_ENABLED", False)
-    limiter, clock = make_limiter()
-    client = FakeClient([Resp("a"), Resp("b")])
-    assert groq_client.chat(MESSAGES, client=client, limiter=limiter, sleep=clock.sleep) == "a"
-    assert groq_client.chat(MESSAGES, client=client, limiter=limiter, sleep=clock.sleep) == "b"
 
 
 def test_rate_limiter_enforces_rpm():
