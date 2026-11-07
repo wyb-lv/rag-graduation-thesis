@@ -28,7 +28,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     // Danh sách các URL công khai không cần kiểm tra Token
     private static final List<String> PUBLIC_PATHS = List.of(
             "/api/auth/login",
-            "/api/auth/register",
             "/api/auth/refresh",
             "/api/auth/logout",
             "/api/ai/health",

@@ -4,6 +4,8 @@ export interface LoginResponse {
   accessToken: string
   refreshToken?: string
   username: string
+  /** Mật khẩu tạm do admin cấp / đặt lại: phải đổi trước khi dùng hệ thống. */
+  mustChangePassword: boolean
 }
 
 export async function loginApi(username: string, password: string): Promise<LoginResponse> {
@@ -14,44 +16,32 @@ export async function loginApi(username: string, password: string): Promise<Logi
   })
   if (res.ok) {
     const data = await res.json()
-    if (data.refreshToken) {
+    // Chưa đổi mật khẩu tạm thì chưa lưu phiên: AuthScreen lưu refreshToken sau khi đổi xong
+    if (data.refreshToken && !data.mustChangePassword) {
       localStorage.setItem('refreshToken', data.refreshToken)
     }
     return {
       accessToken: data.accessToken || data.token,
       refreshToken: data.refreshToken,
       username: data.username || username,
+      mustChangePassword: data.mustChangePassword === true,
     }
   }
   const err = await res.json().catch(() => ({}))
   throw new Error(err.message || err.detail || `Đăng nhập không thành công (${res.status})`)
 }
 
-export async function registerApi(
-  username: string,
-  email: string,
-  password: string,
-  departmentId = 1,
-  role = 'EMPLOYEE'
-): Promise<LoginResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
+/** Tự đổi mật khẩu bằng token vừa nhận (chưa lưu vào localStorage nên không dùng authFetch). Không thu hồi phiên đang đăng nhập. */
+export async function changePasswordApi(accessToken: string, currentPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/accounts/me/change-password`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, email, password, departmentId, role }),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ currentPassword, newPassword }),
   })
-  if (res.ok) {
-    const data = await res.json()
-    if (data.refreshToken) {
-      localStorage.setItem('refreshToken', data.refreshToken)
-    }
-    return {
-      accessToken: data.accessToken || data.token,
-      refreshToken: data.refreshToken,
-      username: data.username || username,
-    }
-  }
+  if (res.ok) return
+  if (res.status === 400) throw new Error('Mật khẩu mới không hợp lệ (8–72 ký tự).')
   const err = await res.json().catch(() => ({}))
-  throw new Error(err.message || err.detail || `Đăng ký không thành công (${res.status})`)
+  throw new Error(err.message || err.detail || `Đổi mật khẩu không thành công (${res.status})`)
 }
 
 /** Khóa của sinh viên (vd 2024), gửi kèm câu hỏi để chỉ lấy quy định áp dụng cho khóa đó. */

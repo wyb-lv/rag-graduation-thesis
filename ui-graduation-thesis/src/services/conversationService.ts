@@ -1,4 +1,4 @@
-import type { SourceCitation } from '@/types'
+import type { Conversation, Message, SourceCitation } from '@/types'
 import rawData from '@/data/conversations.json'
 import { authFetch, getKhoa } from '@/services/authService'
 
@@ -42,7 +42,6 @@ export interface StreamCallbacks {
 
 export interface AskOptions {
   top_k?: number
-  mode?: 'dense' | 'hybrid' | 'hybrid_rerank'
   kho?: string
   reference_date?: string // YYYY-MM-DD
   signal?: AbortSignal
@@ -72,6 +71,33 @@ async function assertOk(res: Response, fallback: string): Promise<void> {
   const errorData = await res.json().catch(() => ({}))
   const detail = typeof errorData.detail === 'string' ? errorData.detail : errorData.message
   throw new Error(detail || `${fallback} (${res.status})`)
+}
+
+// Khớp với ConversationSummary / Conversation trong ai-service/app/api.py (GET /conversations, GET /conversations/{session_id})
+interface RawConversationSummary {
+  session_id: string
+  title: string
+  created_at: string
+}
+
+interface RawConversation extends RawConversationSummary {
+  messages: { role: 'user' | 'assistant'; content: string; ts: string }[]
+}
+
+/** Danh sách hội thoại của người dùng đang đăng nhập (mới nhất trước), `messages` rỗng cho đến khi mở bằng getConversationMessages. */
+export async function listConversations(): Promise<Conversation[]> {
+  const res = await authFetch(buildAiUrl('/conversations'))
+  await assertOk(res, 'Không tải được lịch sử chat')
+  const rows: RawConversationSummary[] = await res.json()
+  return rows.map((r) => ({ id: r.session_id, title: r.title, messages: [], createdAt: r.created_at }))
+}
+
+/** Toàn bộ tin nhắn của một hội thoại. Server không lưu nguồn trích dẫn nên `sources` không có. */
+export async function getConversationMessages(sessionId: string): Promise<Message[]> {
+  const res = await authFetch(buildAiUrl(`/conversations/${encodeURIComponent(sessionId)}`))
+  await assertOk(res, 'Không tải được cuộc hội thoại')
+  const conv: RawConversation = await res.json()
+  return conv.messages.map((m, i) => ({ id: `${sessionId}-${i}`, role: m.role, content: m.content, timestamp: m.ts }))
 }
 
 async function consumeSseResponse(res: Response, callbacks: StreamCallbacks): Promise<void> {
@@ -178,13 +204,12 @@ export async function askVoiceStream(
   callbacks: StreamCallbacks,
   options: AskOptions = {}
 ): Promise<void> {
-  const { signal, top_k, mode, kho, reference_date } = options
+  const { signal, top_k, kho, reference_date } = options
 
   const formData = new FormData()
   const filename = audioFile instanceof File ? audioFile.name : 'voice_message.wav'
   formData.append('file', audioFile, filename)
   if (top_k !== undefined) formData.append('top_k', String(top_k))
-  if (mode) formData.append('mode', mode)
   if (kho) formData.append('kho', kho)
   if (reference_date) formData.append('reference_date', reference_date)
 
