@@ -24,6 +24,10 @@ public class RefreshToken {
     @Column(name = "token_hash", nullable = false, unique = true, length = 255)
     private String tokenHash;
 
+    /** token_version của tài khoản lúc cấp. Account-service tăng giá trị này thì token cũ không còn dùng để refresh được. */
+    @Column(name = "token_version", nullable = false, columnDefinition = "integer not null default 0")
+    private int tokenVersion;
+
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 
