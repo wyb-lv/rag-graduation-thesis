@@ -32,8 +32,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             "/api/auth/logout",
             "/api/ai/health",
             "/health",
-            "/actuator"
+            "/actuator",
+            // Swagger UI của gateway (trang, webjar và tài liệu OpenAPI), xem com.hsu.gateway.docs
+            "/swagger-ui",
+            "/webjars/",
+            "/v3/api-docs"
     );
+
+    /** Đường dẫn không cần token. */
+    public static boolean isPublic(String path) {
+        return PUBLIC_PATHS.stream().anyMatch(path::startsWith);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
@@ -41,8 +50,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
 
         // Bỏ qua các path công khai hoặc request OPTIONS (preflight CORS)
-        if ("OPTIONS".equalsIgnoreCase(request.getMethod()) ||
-                PUBLIC_PATHS.stream().anyMatch(path::startsWith)) {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod()) || isPublic(path)) {
             chain.doFilter(request, response);
             return;
         }

@@ -81,6 +81,29 @@ gateway:
     file-service-burst: ${GATEWAY_FILE_BURST:40}
     auth-service-burst: ${GATEWAY_AUTH_BURST:5}
 
+  # Swagger UI gom tài liệu API của các service tại http://localhost:9090/swagger-ui.html (công khai, không cần token;
+  # "Try it out" cần Authorize bằng access token). Triển khai thật nên đặt GATEWAY_DOCS_ENABLED=false.
+  docs:
+    enabled: ${GATEWAY_DOCS_ENABLED:true}
+    sources:
+      - name: auth
+        title: Auth Service
+        url: ${AUTH_SERVICE_URL:http://localhost:8081}/v3/api-docs
+        include: [/api/auth]
+      - name: accounts
+        title: Account Service
+        url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}/v3/api-docs
+        include: [/api/accounts]
+      - name: documents
+        title: File Service
+        url: ${FILE_SERVICE_URL:http://localhost:8080}/v3/api-docs
+        include: [/api/documents]
+      - name: ai
+        title: AI Service
+        url: ${AI_SERVICE_URL:http://localhost:8000}/openapi.json
+        path-prefix: /api/ai   # ai-service bị StripPrefix=2 nên spec gốc không có /api/ai
+        include: [/api/ai/]
+
   cors:
     allowed-origins: ${GATEWAY_CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:5174}
 

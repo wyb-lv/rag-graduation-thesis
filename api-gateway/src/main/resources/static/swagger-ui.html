@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HSU Chatbot API</title>
+  <link rel="stylesheet" href="/webjars/swagger-ui/swagger-ui.css">
+  <style>body { margin: 0; }</style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="/webjars/swagger-ui/swagger-ui-bundle.js"></script>
+  <script src="/webjars/swagger-ui/swagger-ui-standalone-preset.js"></script>
+  <script>
+    // Danh sách tài liệu (Auth / Account / File / AI) lấy từ gateway.docs.sources qua configUrl.
+    // Bấm "Authorize", dán access token từ POST /api/auth/login (không cần chữ "Bearer ").
+    // Mở thẳng một tài liệu: /swagger-ui.html?urls.primaryName=AI%20Service
+    window.ui = SwaggerUIBundle({
+      configUrl: '/v3/api-docs/swagger-config',
+      'urls.primaryName': new URLSearchParams(location.search).get('urls.primaryName') || undefined,
+      dom_id: '#swagger-ui',
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+      layout: 'StandaloneLayout'
+    });
+  </script>
+</body>
+</html>
