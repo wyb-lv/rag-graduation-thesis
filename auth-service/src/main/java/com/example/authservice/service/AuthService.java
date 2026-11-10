@@ -1,16 +1,18 @@
 package com.example.authservice.service;
 
+import com.example.accountservice.grpc.AccountInfo;
+import com.example.accountservice.grpc.Credentials;
+import com.example.authservice.client.AccountClient;
 import com.example.authservice.dto.*;
-import com.example.authservice.entity.*;
-import com.example.authservice.repository.*;
+import com.example.authservice.entity.RefreshToken;
+import com.example.authservice.repository.RefreshTokenRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
-import javax.security.auth.RefreshFailedException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -18,60 +20,38 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.UUID;
 
+/** Chỉ lo xác thực và cấp token. Dữ liệu tài khoản (mật khẩu, trạng thái, role) thuộc account-service. */
 @Service
 public class AuthService {
-    private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final AccountClient accounts;
     private final JwtService jwtService;
+    private final PasswordEncoder passwordEncoder;
 
     @Value("${application.jwt.refresh-token-expiration}")
     private long refreshTokenExpiration;
 
-    public AuthService(UserRepository userRepository,
-                       RefreshTokenRepository refreshTokenRepository,
-                       PasswordEncoder passwordEncoder,
-                       JwtService jwtService) {
-        this.userRepository = userRepository;
+    public AuthService(RefreshTokenRepository refreshTokenRepository, AccountClient accounts, JwtService jwtService,
+                       PasswordEncoder passwordEncoder) {
         this.refreshTokenRepository = refreshTokenRepository;
-        this.passwordEncoder = passwordEncoder;
+        this.accounts = accounts;
         this.jwtService = jwtService;
+        this.passwordEncoder = passwordEncoder;
     }
 
-    @Transactional
-    public AuthResponse register(RegisterRequest req) {
-        if(userRepository.existsByUsername(req.username())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Username has been exist !");
-        }
-        if(userRepository.existsByEmail(req.email())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email has been exist !");
-        }
-        User user = User.builder()
-                .username(req.username())
-                .email(req.email())
-                .passwordHash(passwordEncoder.encode(req.password()))
-                .departmentId(req.departmentId())
-                .role(UserRole.EMPLOYEE)
-                .build();
-
-        userRepository.save(user);
-        return generateTokensAndSave(user);
-    }
-
-    @Transactional
     public AuthResponse login(LoginRequest req) {
-        User user = userRepository.findByUsername(req.username())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Wrong Username or Password!"));
+        if (req.username() == null || req.password() == null) throw badCredentials();
+        Credentials credentials = accounts.credentials(req.username()).orElseThrow(AuthService::badCredentials);
+        if (!passwordEncoder.matches(req.password(), credentials.getPasswordHash())) throw badCredentials();
 
-        if(!passwordEncoder.matches(req.password(), user.getPasswordHash())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Wrong Username or Password!");
-        }
-
-        if (!user.isActive()) {
+        AccountInfo user = credentials.getAccount();
+        if (!user.getActive()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account has been unactivated!");
         }
 
-        return generateTokensAndSave(user);
+        String rawRefreshToken = UUID.randomUUID().toString();
+        saveRefreshToken(user, rawRefreshToken);
+        return respond(user, rawRefreshToken);
     }
 
     @Transactional
@@ -81,15 +61,11 @@ public class AuthService {
         refreshTokenRepository.findByTokenHash(tokenHash).ifPresent(token -> {
             token.setRevokedAt(Instant.now());
             refreshTokenRepository.save(token);
-
-            userRepository.findById(token.getUserId()).ifPresent(user -> {
-                user.setTokenVersion(user.getTokenVersion() + 1);
-                userRepository.save(user);
-            });
+            accounts.bumpTokenVersion(token.getUserId());
         });
     }
 
-    @Transactional(noRollbackFor = ResponseStatusException.class)
+    @Transactional
     public AuthResponse refreshToken(RefreshTokenRequest req) {
         if (req.refreshToken() == null || req.refreshToken().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Refresh token must not be blank!");
@@ -99,10 +75,7 @@ public class AuthService {
         RefreshToken oldToken = refreshTokenRepository.findByTokenHash(tokenHash)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token is invalid!"));
         if (oldToken.isRevoked() || oldToken.getReplacedBy() != null) {
-            userRepository.findById(oldToken.getUserId()).ifPresent(user -> {
-                user.setTokenVersion(user.getTokenVersion() + 1);
-                userRepository.save(user);
-            });
+            accounts.bumpTokenVersion(oldToken.getUserId());
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                     "Security warning: Token has been used. All login session has been revoked!");
         }
@@ -111,41 +84,43 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token has expired, please login again!");
         }
 
-        User user = userRepository.findById(oldToken.getUserId())
+        AccountInfo user = accounts.find(oldToken.getUserId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User does not exist!"));
 
-        if (!user.isActive()) {
+        if (!user.getActive()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account has been unactivated!");
         }
 
-        String newAccessToken = jwtService.generateAccessToken(user);
+        // Account-service tăng token_version khi vô hiệu hóa/kích hoạt lại, đặt lại mật khẩu: refresh token cấp trước đó coi như bị thu hồi
+        if (oldToken.getTokenVersion() != user.getTokenVersion()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token is invalid!");
+        }
+
         String newRawRefreshToken = UUID.randomUUID().toString();
-        String newRefreshTokenHash = hashSha256(newRawRefreshToken);
-
-        RefreshToken newToken = RefreshToken.builder()
-                .userId(user.getId())
-                .tokenHash(newRefreshTokenHash)
-                .expiresAt(Instant.now().plusMillis(refreshTokenExpiration))
-                .build();
-        refreshTokenRepository.save(newToken);
-
+        RefreshToken newToken = saveRefreshToken(user, newRawRefreshToken);
         oldToken.setRevokedAt(Instant.now());
         oldToken.setReplacedBy(newToken.getId());
         refreshTokenRepository.save(oldToken);
 
-        return AuthResponse.of(newAccessToken, newRawRefreshToken);
+        return respond(user, newRawRefreshToken);
     }
 
-    private AuthResponse generateTokensAndSave(User user) {
-        String accessToken = jwtService.generateAccessToken(user);
-        String rawRefreshToken = UUID.randomUUID().toString();
-        RefreshToken refreshToken = RefreshToken.builder()
+    // Sai username và sai mật khẩu phải cùng một thông báo để không lộ username nào tồn tại
+    private static ResponseStatusException badCredentials() {
+        return new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Wrong Username or Password!");
+    }
+
+    private RefreshToken saveRefreshToken(AccountInfo user, String rawRefreshToken) {
+        return refreshTokenRepository.save(RefreshToken.builder()
                 .userId(user.getId())
                 .tokenHash(hashSha256(rawRefreshToken))
+                .tokenVersion(user.getTokenVersion())
                 .expiresAt(Instant.now().plusMillis(refreshTokenExpiration))
-                .build();
-        refreshTokenRepository.save(refreshToken);
-        return AuthResponse.of(accessToken, rawRefreshToken);
+                .build());
+    }
+
+    private AuthResponse respond(AccountInfo user, String rawRefreshToken) {
+        return AuthResponse.of(jwtService.generateAccessToken(user), rawRefreshToken, user.getMustChangePassword());
     }
 
     private String hashSha256(String input) {

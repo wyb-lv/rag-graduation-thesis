@@ -1,17 +1,17 @@
 import { useState, type FormEvent } from 'react'
 import { useChat } from '@/context/ChatContext'
-import { loginApi, registerApi } from '@/services/authService'
+import { changePasswordApi, loginApi, type LoginResponse } from '@/services/authService'
 
 export function AuthScreen() {
   const { loginSuccess } = useChat()
-  const [tab, setTab] = useState<'login' | 'register'>('login')
-
   // Form states
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [email, setEmail] = useState('')
   const [khoa, setKhoa] = useState('')
-  const [role, setRole] = useState<'EMPLOYEE' | 'MANAGER' | 'ADMIN'>('EMPLOYEE')
+  // Đăng nhập bằng mật khẩu tạm (admin cấp / đặt lại): phải đổi mật khẩu rồi mới vào hệ thống
+  const [pending, setPending] = useState<LoginResponse | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
 
   const [loading, setLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -25,25 +25,49 @@ export function AuthScreen() {
       return
     }
 
-    if (tab === 'register' && !email.trim()) {
-      setErrorMessage('Vui lòng nhập địa chỉ email hợp lệ.')
+    setLoading(true)
+    try {
+      const res = await loginApi(username.trim(), password)
+      if (khoa) localStorage.setItem('khoa', khoa)
+      else localStorage.removeItem('khoa')
+      if (res.mustChangePassword) {
+        setPending(res)
+        return
+      }
+      loginSuccess(res.accessToken, res.username)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Đã có lỗi xảy ra khi xác thực'
+      setErrorMessage(msg)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleChangePassword = async (e: FormEvent) => {
+    e.preventDefault()
+    setErrorMessage(null)
+    if (!pending) return
+
+    if (newPassword.length < 8 || newPassword.length > 72) {
+      setErrorMessage('Mật khẩu mới phải từ 8 đến 72 ký tự.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('Mật khẩu xác nhận không khớp.')
+      return
+    }
+    if (newPassword === password) {
+      setErrorMessage('Mật khẩu mới phải khác mật khẩu tạm.')
       return
     }
 
     setLoading(true)
     try {
-      if (tab === 'login') {
-        const res = await loginApi(username.trim(), password)
-        if (khoa) localStorage.setItem('khoa', khoa)
-        else localStorage.removeItem('khoa')
-        loginSuccess(res.accessToken, res.username)
-      } else {
-        const res = await registerApi(username.trim(), email.trim(), password, 1, role)
-        loginSuccess(res.accessToken, res.username)
-      }
+      await changePasswordApi(pending.accessToken, password, newPassword)
+      if (pending.refreshToken) localStorage.setItem('refreshToken', pending.refreshToken)
+      loginSuccess(pending.accessToken, pending.username)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Đã có lỗi xảy ra khi xác thực'
-      setErrorMessage(msg)
+      setErrorMessage(err instanceof Error ? err.message : 'Đã có lỗi xảy ra khi đổi mật khẩu')
     } finally {
       setLoading(false)
     }
@@ -66,40 +90,8 @@ export function AuthScreen() {
             Trợ lý AI ĐH Hoa Sen
           </h1>
           <p className="text-xs text-[#8e8e8e] mt-1">
-            Hệ thống Tra cứu Quy chế, Quét OCR & Hỏi đáp RAG
+            {pending ? 'Bạn đang dùng mật khẩu tạm — hãy đặt mật khẩu mới để tiếp tục' : 'Hệ thống Tra cứu Quy chế, Quét OCR & Hỏi đáp RAG'}
           </p>
-        </div>
-
-        {/* Tab switch */}
-        <div className="flex bg-[#212121] p-1 rounded-xl mb-6 border border-white/5">
-          <button
-            type="button"
-            onClick={() => {
-              setTab('login')
-              setErrorMessage(null)
-            }}
-            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-              tab === 'login'
-                ? 'bg-[#2f2f2f] text-white shadow-sm'
-                : 'text-[#8e8e8e] hover:text-white'
-            }`}
-          >
-            Đăng nhập
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setTab('register')
-              setErrorMessage(null)
-            }}
-            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-              tab === 'register'
-                ? 'bg-[#2f2f2f] text-white shadow-sm'
-                : 'text-[#8e8e8e] hover:text-white'
-            }`}
-          >
-            Đăng ký mới
-          </button>
         </div>
 
         {/* Error notification */}
@@ -113,52 +105,79 @@ export function AuthScreen() {
         )}
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-[#b4b4b4] mb-1.5">
-              Tên đăng nhập
-            </label>
-            <input
-              type="text"
-              required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="VD: sinhvien_k22"
-              className="w-full bg-[#212121] border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#55b9ff] focus:ring-1 focus:ring-[#55b9ff] transition-all"
-            />
-          </div>
-
-          {tab === 'register' && (
+        {pending ? (
+          <form onSubmit={handleChangePassword} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-[#b4b4b4] mb-1.5">
-                Email sinh viên / cán bộ
+                Mật khẩu mới (8–72 ký tự)
               </label>
               <input
-                type="email"
+                type="password"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="VD: sinhvien@hoasen.edu.vn"
+                autoFocus
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
                 className="w-full bg-[#212121] border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#55b9ff] focus:ring-1 focus:ring-[#55b9ff] transition-all"
               />
             </div>
-          )}
 
-          <div>
-            <label className="block text-xs font-medium text-[#b4b4b4] mb-1.5">
-              Mật khẩu
-            </label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="w-full bg-[#212121] border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#55b9ff] focus:ring-1 focus:ring-[#55b9ff] transition-all"
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-medium text-[#b4b4b4] mb-1.5">
+                Nhập lại mật khẩu mới
+              </label>
+              <input
+                type="password"
+                required
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full bg-[#212121] border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#55b9ff] focus:ring-1 focus:ring-[#55b9ff] transition-all"
+              />
+            </div>
 
-          {tab === 'login' && (
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full mt-2 py-2.5 px-4 bg-[#55b9ff] hover:bg-[#43a5e8] text-black font-semibold rounded-lg text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed shadow-md shadow-[#55b9ff]/10"
+            >
+              {loading ? (
+                <span className="inline-block w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+              ) : (
+                'Đổi mật khẩu và vào hệ thống'
+              )}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-[#b4b4b4] mb-1.5">
+                Tên đăng nhập
+              </label>
+              <input
+                type="text"
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="VD: sinhvien_k22"
+                className="w-full bg-[#212121] border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#55b9ff] focus:ring-1 focus:ring-[#55b9ff] transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#b4b4b4] mb-1.5">
+                Mật khẩu
+              </label>
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full bg-[#212121] border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#55b9ff] focus:ring-1 focus:ring-[#55b9ff] transition-all"
+              />
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-[#b4b4b4] mb-1.5">
                 Khóa (không bắt buộc)
@@ -173,39 +192,20 @@ export function AuthScreen() {
                 className="w-full bg-[#212121] border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#55b9ff] focus:ring-1 focus:ring-[#55b9ff] transition-all"
               />
             </div>
-          )}
 
-          {tab === 'register' && (
-            <div>
-              <label className="block text-xs font-medium text-[#b4b4b4] mb-1.5">
-                Vai trò truy cập
-              </label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value as 'EMPLOYEE' | 'MANAGER' | 'ADMIN')}
-                className="w-full bg-[#212121] border border-white/10 rounded-lg px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#55b9ff] transition-all"
-              >
-                <option value="EMPLOYEE">Chuyên viên / Sinh viên (EMPLOYEE)</option>
-                <option value="MANAGER">Quản lý Phòng ban (MANAGER)</option>
-                <option value="ADMIN">Quản trị viên (ADMIN)</option>
-              </select>
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full mt-2 py-2.5 px-4 bg-[#55b9ff] hover:bg-[#43a5e8] text-black font-semibold rounded-lg text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed shadow-md shadow-[#55b9ff]/10"
-          >
-            {loading ? (
-              <span className="inline-block w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-            ) : tab === 'login' ? (
-              'Đăng nhập hệ thống'
-            ) : (
-              'Tạo tài khoản mới'
-            )}
-          </button>
-        </form>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full mt-2 py-2.5 px-4 bg-[#55b9ff] hover:bg-[#43a5e8] text-black font-semibold rounded-lg text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed shadow-md shadow-[#55b9ff]/10"
+            >
+              {loading ? (
+                <span className="inline-block w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+              ) : (
+                'Đăng nhập hệ thống'
+              )}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   )

@@ -22,6 +22,25 @@ services:
       timeout: 5s
       retries: 10
 
+  # DB riêng của account-service (bảng users). auth-service không truy cập DB này mà gọi account-service qua gRPC.
+  postgres-account:
+    image: postgres:16-alpine
+    container_name: hsu-postgres-account
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: account_db
+      POSTGRES_USER: ${ACCOUNT_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${ACCOUNT_DB_PASSWORD:-change_me_account_db}
+    ports:
+      - "5437:5432"
+    volumes:
+      - account_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   postgres-file:
     image: postgres:17-alpine
     container_name: file-service-postgres
@@ -97,11 +116,12 @@ services:
     container_name: hsu-mongodb
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      # Chỉ loopback, và cổng 27018 (không phải 27017) vì MongoDB cài sẵn trên máy host hay chiếm 27017: kết nối từ host tới đó sẽ không vào container
+      - "127.0.0.1:${MONGO_HOST_PORT:-27018}:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-hsu}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-change_me_mongo}
-    # Không publish cổng 27017: chỉ ai-service trong mạng compose truy cập được (lịch sử hội thoại của người dùng)
+    # ai-service trong mạng compose vào thẳng mongodb:27017; cổng publish ở trên chỉ để Compass / test từ máy host
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -119,16 +139,36 @@ services:
     depends_on:
       postgres-auth:
         condition: service_healthy
+      account-service:
+        condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/auth_db
       SPRING_DATASOURCE_USERNAME: ${AUTH_DB_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${AUTH_DB_PASSWORD:-change_me_auth_db}
       APPLICATION_JWT_SECRET_KEY: ${JWT_SECRET:?đặt JWT_SECRET (>= 32 ký tự) trong .env}
-      APP_SEED_ENABLED: ${AUTH_SEED_ENABLED:-false}
       GRPC_SERVER_PORT: 9091
+      ACCOUNT_GRPC_HOST: account-service   # gọi account-service (lấy tài khoản, mật khẩu đã băm, token_version)
+      ACCOUNT_GRPC_PORT: 9092
     ports:
       - "8081:8081"   # REST
       - "9091:9091"   # gRPC (gateway validate token)
+
+  # REST (8082) chỉ api-gateway gọi tới, gRPC (9092) chỉ auth-service gọi tới: tin header X-User-Role / không xác thực gRPC
+  # nên KHÔNG publish cổng nào ra host.
+  account-service:
+    build: ./account-service
+    container_name: hsu-account-service
+    restart: unless-stopped
+    depends_on:
+      postgres-account:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-account:5432/account_db
+      SPRING_DATASOURCE_USERNAME: ${ACCOUNT_DB_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${ACCOUNT_DB_PASSWORD:-change_me_account_db}
+      APP_SEED_ENABLED: ${ACCOUNT_SEED_ENABLED:-${AUTH_SEED_ENABLED:-false}}   # AUTH_SEED_ENABLED: tên cũ, vẫn nhận
+      AUTH_GRPC_HOST: auth-service   # gọi auth-service để băm/so khớp mật khẩu (không khai depends_on vì auth-service đã phụ thuộc account-service)
+      AUTH_GRPC_PORT: 9091
 
   file-service:
     build: ./file-service
@@ -152,7 +192,6 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_USER:-file_service}
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-file_service_secret}
-      EMBED_ENABLED: ${EMBED_ENABLED:-true}
     ports:
       - "8080:8080"
 
@@ -173,7 +212,8 @@ services:
       QDRANT_URL: http://qdrant:6333
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-file_service}:${RABBITMQ_PASSWORD:-secret}@rabbitmq:5672/
       FILE_SERVICE_URL: http://file-service:8080
-      # Lưu trữ hội thoại (cần SESSION_ENABLED=true trong ai-service/.env). Mật khẩu có ký tự đặc biệt phải URL-encode
+      OCR_VL_URL: http://paddleocr-vl-api:8080   # OCR trang scan: PaddleOCR-VL-1.6 (hai service paddleocr-* bên dưới)
+      # Lưu trữ hội thoại (luôn bật). Mật khẩu có ký tự đặc biệt phải URL-encode
       MONGODB_URI: mongodb://${MONGO_USER:-hsu}:${MONGO_PASSWORD:-change_me_mongo}@mongodb:27017/?authSource=admin
     ports:
       - "8001:8000"   # API + Swagger UI (http://localhost:8001/docs); 8000 hay bị uvicorn chạy tay trên máy chiếm
@@ -189,16 +229,64 @@ services:
               count: 1
               capabilities: [gpu]
 
+  # ── OCR: PaddleOCR-VL-1.6 (pipeline `paddleocr[doc-parser]`, image chính thức của PaddleOCR; cần NVIDIA GPU, driver hỗ trợ CUDA 12.6+) ──
+  # ai-service gửi trang scan sang paddleocr-vl-api (POST /layout-parsing): PP-DocLayoutV3 tách layout, VLM 0.9B (paddleocr-vlm-server, vLLM)
+  # đọc từng chữ / bảng. Image ~ vài GB mỗi cái, tải lần đầu lâu. PADDLEOCR_IMAGE_TAG=paddleocr3.6-nvidia-gpu-offline để ghim phiên bản.
+  paddleocr-vlm-server:
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:${PADDLEOCR_IMAGE_TAG:-latest-nvidia-gpu-offline}
+    container_name: hsu-paddleocr-vlm
+    restart: unless-stopped
+    user: root
+    shm_size: 8g
+    command: paddleocr genai_server --model_name PaddleOCR-VL-1.6-0.9B --host 0.0.0.0 --port 8080 --backend vllm --backend_config /home/paddleocr/vlm_server_config.yaml
+    configs:
+      - source: vlm_server_config
+        target: /home/paddleocr/vlm_server_config.yaml
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      start_period: 300s
+
+  paddleocr-vl-api:
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl:${PADDLEOCR_IMAGE_TAG:-latest-nvidia-gpu-offline}
+    container_name: hsu-paddleocr-vl-api
+    restart: unless-stopped
+    user: root
+    shm_size: 8g
+    depends_on:
+      paddleocr-vlm-server:
+        condition: service_healthy
+    environment:
+      VLM_BACKEND: vllm
+    command: /bin/bash -c "paddlex --serve --pipeline /home/paddleocr/pipeline_config_vllm.yaml"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+
   api-gateway:
     build: ./api-gateway
     container_name: api-gateway
     restart: unless-stopped
     depends_on:
       - auth-service
+      - account-service
       - file-service
       - ai-service
     environment:
       AUTH_SERVICE_URL: http://auth-service:8081
+      ACCOUNT_SERVICE_URL: http://account-service:8082
       FILE_SERVICE_URL: http://file-service:8080
       AI_SERVICE_URL: http://ai-service:8000
       AUTH_GRPC_HOST: auth-service
@@ -210,10 +298,21 @@ services:
     ports:
       - "${GATEWAY_PORT:-9090}:9090"
 
+# Cấu hình vLLM của paddleocr-vlm-server (--backend_config). vLLM chiếm trước `gpu-memory-utilization` x tổng VRAM lúc khởi động, nên phải chia
+# với ai-service (BGE-M3 + reranker) dùng chung GPU: PaddleOCR khuyến nghị 0.7 cho RTX 3060 12GB; model 0.9B bf16 riêng đã ~1.9GB.
+# Đặt OCR_VLM_GPU_UTIL / OCR_VLM_MAX_SEQS trong .env để đổi theo máy.
+configs:
+  vlm_server_config:
+    content: |
+      gpu-memory-utilization: ${OCR_VLM_GPU_UTIL:-0.6}
+      max-num-seqs: ${OCR_VLM_MAX_SEQS:-16}
+
 # Tên volume giữ nguyên như các file compose cũ để không mất dữ liệu đã có.
 volumes:
   auth_postgres_data:
     name: auth-service_postgres_data
+  account_postgres_data:
+    name: account-service_postgres_data
   file_postgres_data:
     name: file-service_postgres_data
   rabbitmq_data:

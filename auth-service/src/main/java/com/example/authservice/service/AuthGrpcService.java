@@ -1,14 +1,17 @@
 package com.example.authservice.service;
 
-import com.example.authservice.entity.User;
+import com.example.accountservice.grpc.AccountInfo;
+import com.example.authservice.client.AccountClient;
 import com.example.authservice.grpc.TokenValidationRequest;
 import com.example.authservice.grpc.TokenValidationResponse;
 import com.example.authservice.grpc.TokenValidationServiceGrpc.TokenValidationServiceImplBase;
-import com.example.authservice.repository.UserRepository;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
 
@@ -18,7 +21,7 @@ import java.util.Optional;
 public class AuthGrpcService extends TokenValidationServiceImplBase {
 
     private final JwtService jwtService;
-    private final UserRepository userRepository;
+    private final AccountClient accounts;
 
     @Override
     public void validateToken(TokenValidationRequest request, StreamObserver<TokenValidationResponse> responseObserver) {
@@ -26,26 +29,32 @@ public class AuthGrpcService extends TokenValidationServiceImplBase {
         TokenValidationResponse.Builder responseBuilder = TokenValidationResponse.newBuilder();
 
         try {
-            String username = jwtService.extractUsername(token);
-            Optional<User> userOpt = userRepository.findByUsername(username);
+            Claims claims = jwtService.parse(token);
+            Long userId = claims.get("userId", Long.class);
+            Optional<AccountInfo> userOpt = userId == null ? Optional.empty() : accounts.find(userId);
 
             if (userOpt.isEmpty()) {
                 responseBuilder.setIsValid(false).setErrorMessage("Người dùng không tồn tại");
             } else {
-                User user = userOpt.get();
+                AccountInfo user = userOpt.get();
 
-                if (!user.isActive()) {
+                if (!user.getActive()) {
                     responseBuilder.setIsValid(false).setErrorMessage("Tài khoản đã bị vô hiệu hóa");
-                } else if (!jwtService.isTokenValid(token, user)) {
+                } else if (!jwtService.isTokenValid(claims, user)) {
                     responseBuilder.setIsValid(false).setErrorMessage("Token không hợp lệ hoặc đã hết hạn");
                 } else {
                     responseBuilder.setIsValid(true)
                             .setUserId(user.getId())
                             .setUsername(user.getUsername())
-                            .setRole(user.getRole().name())
-                            .setDepartmentId(user.getDepartmentId() != null ? user.getDepartmentId() : 0);
+                            .setRole(user.getRole())
+                            .setDepartmentId(user.getDepartmentId());
                 }
             }
+        } catch (ResponseStatusException e) {
+            // Account-service không trả lời: báo UNAVAILABLE để gateway trả 503, không phải 401 (FE sẽ đăng xuất người dùng)
+            log.warn("Không gọi được account-service để xác thực token: {}", e.getReason());
+            responseObserver.onError(Status.UNAVAILABLE.withDescription(e.getReason()).asRuntimeException());
+            return;
         } catch (Exception e) {
             log.warn("Lỗi khi xác thực gRPC token: {}", e.getMessage());
             responseBuilder.setIsValid(false).setErrorMessage("Lỗi xác thực: " + e.getMessage());

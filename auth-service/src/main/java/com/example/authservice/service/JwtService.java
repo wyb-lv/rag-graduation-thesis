@@ -1,8 +1,8 @@
 package com.example.authservice.service;
 
-import com.example.authservice.entity.User;
+import com.example.accountservice.grpc.AccountInfo;
 import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.JwtParser;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,26 +13,25 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.Function;
 
 @Service
 public class JwtService {
-    @Value("${application.jwt.secret-key}")
-    private String secretKey;
+    private final SecretKey key;
+    private final JwtParser parser;
+    private final long accessTokenExpiration;
 
-    @Value("${application.jwt.access-token-expiration}")
-    private long accessTokenExpiration;
-
-    private SecretKey getSigningKey() {
-        byte[] keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);
-        return Keys.hmacShaKeyFor(keyBytes);
+    public JwtService(@Value("${application.jwt.secret-key}") String secretKey,
+                      @Value("${application.jwt.access-token-expiration}") long accessTokenExpiration) {
+        this.key = Keys.hmacShaKeyFor(secretKey.getBytes(StandardCharsets.UTF_8));
+        this.parser = Jwts.parser().verifyWith(key).build();
+        this.accessTokenExpiration = accessTokenExpiration;
     }
 
-    public String generateAccessToken(User user) {
+    public String generateAccessToken(AccountInfo user) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", user.getId());
         claims.put("departmentId", user.getDepartmentId());
-        claims.put("role", user.getRole().name());
+        claims.put("role", user.getRole());
         claims.put("tokenVersion", user.getTokenVersion());
 
         Date now = new Date();
@@ -43,42 +42,20 @@ public class JwtService {
                 .claims(claims)
                 .issuedAt(now)
                 .expiration(expiryDate)
-                .signWith(getSigningKey())
+                .signWith(key)
                 .compact();
     }
 
-    public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
+    /** Kiểm tra chữ ký và hạn một lần; ném JwtException nếu token sai hoặc hết hạn. */
+    public Claims parse(String token) {
+        return parser.parseSignedClaims(token).getPayload();
     }
 
-    public Integer extractTokenVersion(String token) {
-        return extractClaim(token, claims -> claims.get("tokenVersion", Integer.class));
-    }
-
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
-        return claimsResolver.apply(claims);
-    }
-
-    public Claims extractAllClaims(String token) {
-        return Jwts.parser()
-                .verifyWith(getSigningKey())
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
-    }
-
-    public boolean isTokenValid(String token, User user) {
-        try {
-            Claims claims = extractAllClaims(token);
-            String username = claims.getSubject();
-            Integer tokenVersion = claims.get("tokenVersion", Integer.class);
-
-            return username.equals(user.getUsername())
-                    && tokenVersion != null
-                    && tokenVersion == user.getTokenVersion();
-        } catch (JwtException | IllegalArgumentException e) {
-            return false;
-        }
+    /** Token còn giá trị nếu đúng người dùng và tokenVersion chưa bị account-service tăng lên. */
+    public boolean isTokenValid(Claims claims, AccountInfo user) {
+        Integer tokenVersion = claims.get("tokenVersion", Integer.class);
+        return user.getUsername().equals(claims.getSubject())
+                && tokenVersion != null
+                && tokenVersion == user.getTokenVersion();
     }
 }

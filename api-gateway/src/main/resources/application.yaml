@@ -15,6 +15,12 @@ spring:
             predicates:
               - Path=/api/auth/**
 
+          # ── Account Service: quản lý tài khoản (chỉ ADMIN, account-service tự kiểm tra role) ──
+          - id: account-service
+            uri: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
+            predicates:
+              - Path=/api/accounts, /api/accounts/**
+
           # ── File Service: quản lý tài liệu ──────────────────────────────
           - id: file-service
             uri: ${FILE_SERVICE_URL:http://localhost:8080}
