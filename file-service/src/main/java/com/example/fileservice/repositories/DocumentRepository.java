@@ -17,7 +17,7 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     @Query("select d.id from Document d where d.ocrStatus in :statuses and d.ocrQueuedAt is null order by d.id")
     List<Long> findIdsNotQueued(@Param("statuses") Collection<OcrStatus> statuses);
 
-    // Update đúng một cột, không save cả entity, để không ghi đè trạng thái OCR do consumer đang sửa
+    // Update đúng một cột, không save cả entity, để không ghi đè trạng thái OCR do OcrResultService đang sửa
     @Transactional
     @Modifying
     @Query("update Document d set d.ocrQueuedAt = :at where d.id = :id and d.ocrQueuedAt is null")
