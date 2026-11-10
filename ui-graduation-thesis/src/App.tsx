@@ -8,7 +8,7 @@ import { AuthScreen } from '@/components/auth/AuthScreen'
 import { OcrDemoView } from '@/components/ocr/OcrDemoView'
 
 function MainContent() {
-  const { token, activeView, setActiveView, messages, isLoading, sendMessage, sendVoiceMessage } = useChat()
+  const { token, isAdmin, activeView, setActiveView, messages, isLoading, sendMessage, sendVoiceMessage } = useChat()
 
   if (!token) {
     return <AuthScreen />
@@ -16,7 +16,7 @@ function MainContent() {
 
   return (
     <AppLayout>
-      {activeView === 'ocr' ? (
+      {activeView === 'ocr' && isAdmin ? (
         <OcrDemoView />
       ) : activeView === 'call' ? (
         <VoiceCallView onEndCall={() => setActiveView('chat')} />

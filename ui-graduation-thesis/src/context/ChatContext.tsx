@@ -7,6 +7,7 @@ import {
   getConversationMessages,
   listConversations,
 } from '@/services/conversationService'
+import { getRole } from '@/services/authService'
 
 export type RightSidebarTab = 'hidden' | 'sources' | 'detail'
 
@@ -17,6 +18,8 @@ interface ChatContextType {
 
   // Auth
   token: string | null
+  /** ADMIN dùng mọi tính năng; role khác (USER) chỉ hỏi đáp AI. */
+  isAdmin: boolean
   currentUser: string | null
   loginSuccess: (token: string, username: string) => void
   logout: () => void
@@ -335,6 +338,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         activeView,
         setActiveView,
         token,
+        isAdmin: getRole(token) === 'ADMIN',
         currentUser,
         loginSuccess,
         logout,
