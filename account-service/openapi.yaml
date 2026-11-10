@@ -59,8 +59,7 @@ paths:
           type: string
           enum:
           - ADMIN
-          - MANAGER
-          - EMPLOYEE
+          - USER
       - name: active
         in: query
         required: false
@@ -212,8 +211,7 @@ components:
           type: string
           enum:
           - ADMIN
-          - MANAGER
-          - EMPLOYEE
+          - USER
       required:
       - departmentId
       - email
@@ -242,8 +240,7 @@ components:
           type: string
           enum:
           - ADMIN
-          - MANAGER
-          - EMPLOYEE
+          - USER
         tempPassword:
           type: string
           maxLength: 72
@@ -273,8 +270,7 @@ components:
           type: string
           enum:
           - ADMIN
-          - MANAGER
-          - EMPLOYEE
+          - USER
         active:
           type: boolean
         mustChangePassword:

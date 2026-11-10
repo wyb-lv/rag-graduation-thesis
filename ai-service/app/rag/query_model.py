@@ -13,24 +13,15 @@ from qdrant_client import QdrantClient, models
 
 from .. import bm25
 from .. import config as cfg
+from .. import texts
 from ..router import guard
 from ..llm import groq_client
 from ..models import encoders
 from . import query_rewrite
 
-NO_RESULT_ANSWER = "Không tìm thấy quy định liên quan đến câu hỏi trong các văn bản được cung cấp."
+NO_RESULT_ANSWER = cfg.NO_RESULT_ANSWER
 
-BASE_SYSTEM_PROMPT = (
-    "Bạn là trợ lý hỏi đáp quy định của Trường Đại học Hoa Sen. "
-    "Chỉ trả lời dựa trên các đoạn trích được cung cấp, không dùng kiến thức bên ngoài.\n"
-    "Quy tắc:\n"
-    "1. Trả lời bằng tiếng Việt, ngắn gọn, chính xác.\n"
-    "2. Mỗi khẳng định phải kèm trích dẫn ngay sau đó, dạng [Tên văn bản, Điều X, Khoản Y]. "
-    "Tên văn bản lấy từ nhãn \"Tài liệu\" của đoạn trích; số Điều/Khoản lấy từ chính nội dung đoạn trích. "
-    "Nếu đoạn trích không nêu số Điều/Khoản thì chỉ ghi tên văn bản, tuyệt đối không tự đặt ra số Điều/Khoản.\n"
-    "3. Nếu các đoạn trích không chứa thông tin để trả lời, hãy nói rõ: "
-    "\"Các đoạn trích được cung cấp không chứa thông tin để trả lời câu hỏi này.\" và không suy đoán."
-)
+BASE_SYSTEM_PROMPT = texts.read_text("answer_system.txt")
 # Them quy tac chong injection + canary (guard.py).
 SYSTEM_PROMPT = guard.harden_prompt(BASE_SYSTEM_PROMPT)
 

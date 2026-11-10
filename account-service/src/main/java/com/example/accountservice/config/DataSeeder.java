@@ -27,11 +27,10 @@ public class DataSeeder implements CommandLineRunner {
 
     private static final List<Seed> SEEDS = List.of(
             new Seed("admin", "admin@hsu.edu.vn", "$2a$10$iunL1xAsNIxjUeafFWTbq.sNcI.Ntb9dq4g66NollJDEBoyaqz.gK", 1, UserRole.ADMIN), // Admin@123
-            new Seed("manager", "manager@hsu.edu.vn", "$2a$10$E52qrR0.FMbvE4rea4JhuuxP/kGgC.uCl/gNhvDARmjV.ff.x8SRC", 1, UserRole.MANAGER), // Manager@123
-            new Seed("employee1", "employee1@hsu.edu.vn", EMPLOYEE_PW, 1, UserRole.EMPLOYEE),
-            new Seed("employee2", "employee2@hsu.edu.vn", EMPLOYEE_PW, 2, UserRole.EMPLOYEE),
+            new Seed("employee1", "employee1@hsu.edu.vn", EMPLOYEE_PW, 1, UserRole.USER),
+            new Seed("employee2", "employee2@hsu.edu.vn", EMPLOYEE_PW, 2, UserRole.USER),
             // Tài khoản của nút "Đăng nhập nhanh" trên FE (AuthScreen)
-            new Seed("demo_hsu", "demo@hsu.edu.vn", "$2a$10$G2t6KL18M68HJcACTjFxWOW8ISeyQo/zbFcdIbqT90llo.abXIwvO", 1, UserRole.EMPLOYEE) // Password@123
+            new Seed("demo_hsu", "demo@hsu.edu.vn", "$2a$10$G2t6KL18M68HJcACTjFxWOW8ISeyQo/zbFcdIbqT90llo.abXIwvO", 1, UserRole.USER) // Password@123
     );
 
     private final UserRepository userRepository;

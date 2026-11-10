@@ -1,0 +1,31 @@
+# Chuan hoa van ban hoc vu truoc khi doc bang TTS (chay tuan tu). Dinh dang dong nhu stt_phonetic_rules.jsonl.
+# Ky hieu phap quy / van ban hanh chinh HSU, viet tat hoc vu
+{"pattern": "\\bQĐ-ĐHHS\\b", "replace": "Quyết định Đại học Hoa Sen"}
+{"pattern": "\\bTB-ĐHHS\\b", "replace": "Thông báo Đại học Hoa Sen"}
+{"pattern": "\\bĐHHS\\b", "replace": "Đại học Hoa Sen"}
+{"pattern": "\\bHSU\\b", "replace": "Đại học Hoa Sen"}
+{"pattern": "\\bTP\\.\\s*HCM\\b", "replace": "Thành phố Hồ Chí Minh", "ignorecase": true}
+{"pattern": "\\bTPHCM\\b", "replace": "Thành phố Hồ Chí Minh", "ignorecase": true}
+{"pattern": "\\bSV\\b", "replace": "sinh viên"}
+{"pattern": "\\bGV\\b", "replace": "giảng viên"}
+{"pattern": "\\bCNTT\\b", "replace": "Công nghệ thông tin"}
+{"pattern": "\\bKLTN\\b", "replace": "khóa luận tốt nghiệp"}
+{"pattern": "\\bĐRL\\b", "replace": "điểm rèn luyện"}
+{"pattern": "\\bĐTBCTL\\b", "replace": "điểm trung bình chung tích lũy"}
+{"pattern": "\\bĐTBHK\\b", "replace": "điểm trung bình học kỳ"}
+{"pattern": "\\bTC\\b", "replace": "tín chỉ"}
+{"pattern": "\\bHP\\b", "replace": "học phần"}
+# Dau gach cheo trong nam hoc va ma quyet dinh
+{"pattern": "(\\d{4})\\s*-\\s*(\\d{4})", "replace": "\\1 đến \\2"}
+{"pattern": "\\b(\\d+)\\s*/\\s*(QĐ|TB|KH|HD)\\b", "replace": "\\1 \\2"}
+# Ky hieu so sanh va phan tram
+{"pattern": ">=\\s*(\\d+(?:[.,]\\d+)?)", "replace": "lớn hơn hoặc bằng \\1"}
+{"pattern": "<=\\s*(\\d+(?:[.,]\\d+)?)", "replace": "nhỏ hơn hoặc bằng \\1"}
+{"pattern": "(\\d+(?:[.,]\\d+)?)\\s*%", "replace": "\\1 phần trăm"}
+# Doc diem so thap phan kieu 2.5 / 4.0
+{"pattern": "(\\d+)\\.(\\d+)\\s*/\\s*(\\d+)\\.(\\d+)", "replace": "\\1 chấm \\2 trên \\3 chấm \\4"}
+# Bo trich dan nguon file RAG trong ngoac vuong (vd: [QuyDinhHocBong.pdf, Dieu 1, Khoan 2])
+{"pattern": "\\[\\s*[^\\]]*?\\.(?:pdf|docx?|txt|xlsx?)[^\\]]*?\\]", "replace": "", "ignorecase": true}
+# Bo ky tu trang tri Markdown lam TTS doc ngac ngu
+{"pattern": "[*_`#>-]{2,}", "replace": " "}
+{"pattern": "\\[([^\\]]+)\\]\\([^)]+\\)", "replace": "\\1"}

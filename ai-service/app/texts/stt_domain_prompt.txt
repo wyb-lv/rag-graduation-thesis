@@ -1,0 +1,1 @@
+HSU, Đại học Hoa Sen, tín chỉ, học phần, rút học phần, học phí, học bổng, điểm rèn luyện, GPA, điểm trung bình tích lũy, khóa luận tốt nghiệp, thực tập doanh nghiệp, chuẩn đầu ra, TOEIC, IELTS, điểm F, bảo lưu, cảnh báo học vụ, buộc thôi học, niên chế, học kỳ, đăng ký học phần, phòng Đào tạo, công tác sinh viên, quy chế đào tạo.

@@ -57,7 +57,7 @@ OUT_OF_SCOPE = [
 
 
 def top_score(question, khoa):
-    hits = qm.rerank(question, qm.retrieve(question, "hybrid", khoa=khoa))
+    hits = qm.rerank(question, qm.retrieve(question, khoa=khoa))
     return hits
 
 

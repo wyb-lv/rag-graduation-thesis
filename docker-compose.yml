@@ -207,7 +207,7 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
-    env_file: ./ai-service/.env   # API_KEY, GROQ_QWEN_MODEL, ...
+    env_file: ./ai-service/.env   # GROQ_API_KEY, GROQ_QWEN_MODEL, ...
     environment:
       QDRANT_URL: http://qdrant:6333
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-file_service}:${RABBITMQ_PASSWORD:-secret}@rabbitmq:5672/

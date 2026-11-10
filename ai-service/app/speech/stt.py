@@ -6,7 +6,7 @@ import struct
 import wave
 from typing import Any, Dict, List, Tuple
 
-from .. import config as cfg
+from .. import config as cfg, texts
 from ..llm.groq_client import get_client as get_groq_client
 
 
@@ -21,34 +21,10 @@ class UnsupportedAudioFormatError(ValueError):
 # ==============================================================================
 # HẰNG SỐ DOMAIN LEXICON & PHONETIC CORRECTION (DÀNH CHO STT HỌC VỤ HSU)
 # ==============================================================================
-DOMAIN_PROMPT = (
-    "HSU, Đại học Hoa Sen, tín chỉ, học phần, "
-    "rút học phần, học phí, học bổng, điểm rèn luyện, GPA, điểm trung bình tích lũy, "
-    "khóa luận tốt nghiệp, thực tập doanh nghiệp, chuẩn đầu ra, TOEIC, IELTS, điểm F, bảo lưu, "
-    "cảnh báo học vụ, buộc thôi học, niên chế, học kỳ, đăng ký học phần, "
-    "phòng Đào tạo, công tác sinh viên, quy chế đào tạo."
-)
+DOMAIN_PROMPT = texts.read_text("stt_domain_prompt.txt")
 
 # Bảng luật sửa lỗi đồng âm / phát âm địa phương sang thuật ngữ học vụ chuẩn
-PHONETIC_RULES: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r"\btính\s+chỉ\b", re.IGNORECASE), "tín chỉ"),
-    (re.compile(r"\btín\s+chĩ\b", re.IGNORECASE), "tín chỉ"),
-    (re.compile(r"\bhọc\s+bỗng\b", re.IGNORECASE), "học bổng"),
-    (re.compile(r"\bđiểm\s+rèn\s+liện\b", re.IGNORECASE), "điểm rèn luyện"),
-    (re.compile(r"\bkhóa\s+lận\b", re.IGNORECASE), "khóa luận"),
-    (re.compile(r"\bbão\s+lưu\b", re.IGNORECASE), "bảo lưu"),
-    (re.compile(r"\bchuẩn\s+đầu\s+ga\b", re.IGNORECASE), "chuẩn đầu ra"),
-    (re.compile(r"\bngành\s+lật\b", re.IGNORECASE), "ngành Luật"),
-    (re.compile(r"\bthực\s+tập\s+danh\s+nghiệp\b", re.IGNORECASE), "thực tập doanh nghiệp"),
-    (re.compile(r"\bđiểm\s+ép\b", re.IGNORECASE), "điểm F"),
-    (re.compile(r"\bhắt\s*ét\s*u\b", re.IGNORECASE), "HSU"),
-    (re.compile(r"\bhắt\s*ét\s*iu\b", re.IGNORECASE), "HSU"),
-    (re.compile(r"\bhát\s*ét\s*u\b", re.IGNORECASE), "HSU"),
-    (re.compile(r"\bgi\s*pi\s*ây\b", re.IGNORECASE), "GPA"),
-    (re.compile(r"\bgờ\s*pê\s*a\b", re.IGNORECASE), "GPA"),
-    (re.compile(r"\btô\s*ích\b", re.IGNORECASE), "TOEIC"),
-    (re.compile(r"\bai\s*eo(?:\s*sờ)?\b", re.IGNORECASE), "IELTS"),
-]
+PHONETIC_RULES: List[Tuple[re.Pattern, str]] = texts.read_rules("stt_phonetic_rules.jsonl", "replace")
 
 
 def _has_valid_audio_signature(data: bytes) -> bool:
