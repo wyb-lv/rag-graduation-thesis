@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+from .. import texts
+
 MAX_CHARS = 1500       # chunk dài hơn mức này thì tách theo khoản
 TARGET_CHARS = 1200    # mức gom khoản khi tách
 MIN_CHARS = 150        # chunk ngắn hơn mức này thì gộp vào chunk kề
@@ -23,6 +25,7 @@ _DIEM = re.compile(r"^\s*(?:[a-zđ]\)|[-•+–]\s)\s*\S")
 _PAGE_NUM = re.compile(r"^\s*[|\[(]?\s*(?:Trang\s*[|:]?\s*)?\d{1,3}\s*[|\])]?\s*$", re.I)
 _RUNNING_HEADER = re.compile(r"\bM[aãàáạ]\s*(?:hi[eêéệ]u|t[aàá]i\s*li[eêéệ]u)\b\s*:", re.I)
 _TOC_LINE = re.compile(r"\.{5,}|…{3,}")
+_DOC_TYPES = texts.read_rules("document_types.jsonl", "loai")  # (regex tren ten tai lieu viet thuong, loai_van_ban), app/texts/
 
 
 def _heading(s: str) -> Optional[tuple[int, str]]:
@@ -229,18 +232,7 @@ def _merge_tiny(chunks: list[Chunk]) -> list[Chunk]:
 def infer_metadata(source: str) -> dict:
     """Suy ra loại văn bản và khóa áp dụng (khoa_tu..khoa_den, thiếu = không giới hạn) từ tên tài liệu."""
     s = source.lower()
-    if re.match(r"(thông báo|tb\d*\b)", s):
-        loai = "thong_bao"
-    elif re.match(r"(đơn|báo cáo|giấy xác nhận|danh sách|phiếu)", s):
-        loai = "bieu_mau"
-    elif s.startswith("hướng dẫn"):
-        loai = "huong_dan"
-    elif s.startswith("quy chế"):
-        loai = "quy_che"
-    elif s.startswith(("quy định", "quy đinh", "quy trình")):
-        loai = "quy_dinh"
-    else:
-        loai = "khac"
+    loai = next((value for pattern, value in _DOC_TYPES if pattern.match(s)), "khac")  # app/texts/document_types.jsonl
     meta = {"loai_van_ban": loai}
     m = re.search(r"kh[oó][aáà]\s*(\d{4}(?:\s*[,\-–]\s*\d{4})*)(.{0,25})", s)
     if m:

@@ -12,7 +12,7 @@ from starlette.concurrency import iterate_in_threadpool
 import edge_tts
 import httpx
 
-from .. import config as cfg
+from .. import config as cfg, texts
 
 log = logging.getLogger("uvicorn.error")
 _EDGE_TTS_SEM = asyncio.Semaphore(1)
@@ -32,38 +32,7 @@ _TTS_CACHE_MAX = 128
 # ==============================================================================
 # HẰNG SỐ CHUẨN HÓA VĂN BẢN HỌC VỤ (DÀNH CHO TTS PHÁP QUY HSU)
 # ==============================================================================
-ACADEMIC_TTS_RULES: List[Tuple[re.Pattern, str]] = [
-    # Ký hiệu pháp quy / văn bản hành chính HSU
-    (re.compile(r"\bQĐ-ĐHHS\b"), "Quyết định Đại học Hoa Sen"),
-    (re.compile(r"\bTB-ĐHHS\b"), "Thông báo Đại học Hoa Sen"),
-    (re.compile(r"\bĐHHS\b"), "Đại học Hoa Sen"),
-    (re.compile(r"\bHSU\b"), "Đại học Hoa Sen"),
-    (re.compile(r"\bTP\.\s*HCM\b", re.IGNORECASE), "Thành phố Hồ Chí Minh"),
-    (re.compile(r"\bTPHCM\b", re.IGNORECASE), "Thành phố Hồ Chí Minh"),
-    (re.compile(r"\bSV\b"), "sinh viên"),
-    (re.compile(r"\bGV\b"), "giảng viên"),
-    (re.compile(r"\bCNTT\b"), "Công nghệ thông tin"),
-    (re.compile(r"\bKLTN\b"), "khóa luận tốt nghiệp"),
-    (re.compile(r"\bĐRL\b"), "điểm rèn luyện"),
-    (re.compile(r"\bĐTBCTL\b"), "điểm trung bình chung tích lũy"),
-    (re.compile(r"\bĐTBHK\b"), "điểm trung bình học kỳ"),
-    (re.compile(r"\bTC\b"), "tín chỉ"),
-    (re.compile(r"\bHP\b"), "học phần"),
-    # Xử lý dấu gạch chéo trong năm học và mã quyết định
-    (re.compile(r"(\d{4})\s*-\s*(\d{4})"), r"\1 đến \2"),
-    (re.compile(r"\b(\d+)\s*/\s*(QĐ|TB|KH|HD)\b"), r"\1 \2"),
-    # Ký hiệu so sánh & phần trăm
-    (re.compile(r">=\s*(\d+(?:[.,]\d+)?)"), r"lớn hơn hoặc bằng \1"),
-    (re.compile(r"<=\s*(\d+(?:[.,]\d+)?)"), r"nhỏ hơn hoặc bằng \1"),
-    (re.compile(r"(\d+(?:[.,]\d+)?)\s*%"), r"\1 phần trăm"),
-    # Đọc điểm số thập phân kiểu 2.5 / 4.0
-    (re.compile(r"(\d+)\.(\d+)\s*/\s*(\d+)\.(\d+)"), r"\1 chấm \2 trên \3 chấm \4"),
-    # Loại bỏ trích dẫn nguồn file RAG trong ngoặc vuông (vd: [QuyDinhHocBong.pdf, Điều 1, Khoản 2], [quy_che.pdf])
-    (re.compile(r"\[\s*[^\]]*?\.(?:pdf|docx?|txt|xlsx?)[^\]]*?\]", re.IGNORECASE), ""),
-    # Loại bỏ ký tự trang trí Markdown làm TTS đọc ngắc ngứ
-    (re.compile(r"[*_`#>-]{2,}"), " "),
-    (re.compile(r"\[([^\]]+)\]\([^)]+\)"), r"\1"),
-]
+ACADEMIC_TTS_RULES: List[Tuple[re.Pattern, str]] = texts.read_rules("tts_rules.jsonl", "replace")
 
 
 def _get_http_client() -> httpx.AsyncClient:

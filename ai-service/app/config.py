@@ -9,6 +9,8 @@ import os
 
 from dotenv import load_dotenv
 
+from . import texts
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
@@ -110,33 +112,25 @@ GUARD_MAX_QUESTION_CHARS = 1000
 # tien trinh, nen cache dia cua Groq van trung). Dat tay neu muon doi canary ma khong sua prompt.
 GUARD_CANARY = ""
 
-# Cau tra loi co dinh. Giong giong dieu cua SYSTEM_PROMPT; khong nhac ten model / nha cung cap.
-GUARD_REFUSAL_ANSWER = (
-    "Tôi không thể thực hiện yêu cầu này. Bạn có thể hỏi tôi về quy chế, quy định, thông báo hoặc biểu mẫu "
-    "của Trường Đại học Hoa Sen."
-)
-_ABOUT = (
-    "Tôi là trợ lý tra cứu quy định của Trường Đại học Hoa Sen. Tôi tìm quy chế, quy định, thông báo, biểu mẫu và "
-    "hướng dẫn trong các kho văn bản của trường, trả lời kèm trích dẫn (tên văn bản, Điều, Khoản) và nói rõ khi "
-    "các văn bản không chứa câu trả lời. Với nội dung nằm ngoài các văn bản, bạn vui lòng liên hệ phòng, ban phụ "
-    "trách."
-)
-GUARD_REPLY_GREETING = f"Xin chào! {_ABOUT} Bạn muốn tra cứu nội dung gì?"
-GUARD_REPLY_CAPABILITY = f"{_ABOUT} Bạn cứ đặt câu hỏi về quy định nhé."
-GUARD_REPLY_META = (
-    "Tôi là trợ lý tra cứu quy định của Trường Đại học Hoa Sen và không chia sẻ thông tin cấu hình nội bộ. "
-    "Bạn có thể hỏi tôi về quy chế, quy định, thông báo hoặc biểu mẫu của trường."
-)
-GUARD_REPLY_THANKS = "Không có gì! Bạn cần tra cứu thêm quy định nào cứ hỏi nhé."
-GUARD_REPLY_GOODBYE = "Tạm biệt! Khi cần tra cứu quy định, bạn cứ quay lại nhé."
+# Cau tra loi co dinh (app/texts/answers.json; {ABOUT} duoc thay bang mo ta tro ly). Giong giong dieu cua SYSTEM_PROMPT; khong nhac ten model / nha cung cap.
+_ANSWERS = texts.read_json("answers.json")
 
-OFF_TOPIC_ANSWER = (
-    "Tôi chỉ hỗ trợ tra cứu quy chế, quy định, thông báo, biểu mẫu và hướng dẫn của Trường Đại học Hoa Sen. "
-    "Bạn vui lòng đặt lại câu hỏi theo một chủ đề quy định của trường nhé."
-)
-CLARIFY_ANSWER_TOPIC = "Bạn muốn hỏi về quy định hoặc chủ đề nào của trường (ví dụ học bổng, học phí, đăng ký học phần)?"
-CLARIFY_ANSWER_AUDIENCE = "Bạn là sinh viên khóa nào hoặc thuộc chương trình đào tạo nào để tôi tra cứu đúng quy định áp dụng?"
-CLARIFY_ANSWER_TIME = "Bạn muốn hỏi cho học kỳ hoặc năm học nào?"
+
+def _answer(key):
+    return _ANSWERS[key].replace("{ABOUT}", _ANSWERS["ABOUT"])
+
+
+NO_RESULT_ANSWER = _answer("NO_RESULT_ANSWER")
+GUARD_REFUSAL_ANSWER = _answer("GUARD_REFUSAL_ANSWER")
+GUARD_REPLY_GREETING = _answer("GUARD_REPLY_GREETING")
+GUARD_REPLY_CAPABILITY = _answer("GUARD_REPLY_CAPABILITY")
+GUARD_REPLY_META = _answer("GUARD_REPLY_META")
+GUARD_REPLY_THANKS = _answer("GUARD_REPLY_THANKS")
+GUARD_REPLY_GOODBYE = _answer("GUARD_REPLY_GOODBYE")
+OFF_TOPIC_ANSWER = _answer("OFF_TOPIC_ANSWER")
+CLARIFY_ANSWER_TOPIC = _answer("CLARIFY_ANSWER_TOPIC")
+CLARIFY_ANSWER_AUDIENCE = _answer("CLARIFY_ANSWER_AUDIENCE")
+CLARIFY_ANSWER_TIME = _answer("CLARIFY_ANSWER_TIME")
 
 # ---- Router LLM (router_llm.py): Gemini (REST generateContent) tu suy luan chao hoi / tan cong / ngoai pham vi / hoi lai / RAG, khong con
 # luat tu khoa nao. Luon bat; loi (timeout, quota, thieu GEMINI_API_KEY / GEMINI_MODEL) thi cau hoi di thang vao RAG ----

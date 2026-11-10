@@ -1,0 +1,8 @@
+# Ngoai pham vi quy dinh cua truong (tho, code, y te, truong khac, dich thuat).
+# Moi dong la mot vi du JSON: question, intent, confidence bat buoc; query, missing, khoa, previous_was_clarify, history ([[role, text], ...]) tuy chon.
+{"question": "Viết giúp mình một bài thơ về mùa thu", "intent": "off_topic", "confidence": 0.97}
+{"question": "chào bạn, viết giúp mình bài thơ", "intent": "off_topic", "confidence": 0.93}
+{"question": "Làm sao đảo ngược một linked list trong Python?", "intent": "off_topic", "confidence": 0.97}
+{"question": "toi bi dau dau nen uong thuoc gi", "intent": "off_topic", "confidence": 0.96}
+{"question": "Học phí Đại học Bách Khoa là bao nhiêu?", "intent": "off_topic", "confidence": 0.88}
+{"question": "dich giup minh doan van nay sang tieng Anh", "intent": "off_topic", "confidence": 0.95}
