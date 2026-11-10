@@ -30,7 +30,7 @@ class AccountGrpcServiceTest {
     void setUp() {
         users.deleteAll();
         id = users.save(User.builder().username("bob").email("bob@hsu.edu.vn").passwordHash("enc(Old@12345)")
-                .departmentId(4L).role(UserRole.MANAGER).mustChangePassword(true).build()).getId();
+                .departmentId(4L).role(UserRole.ADMIN).mustChangePassword(true).build()).getId();
         channel = InProcessChannelBuilder.forName("account-test").directExecutor().build();
         stub = AccountInternalServiceGrpc.newBlockingStub(channel);
     }
@@ -52,7 +52,7 @@ class AccountGrpcServiceTest {
         AccountInfo info = c.getAccount();
         assertThat(info.getId()).isEqualTo(id);
         assertThat(info.getUsername()).isEqualTo("bob");
-        assertThat(info.getRole()).isEqualTo("MANAGER");
+        assertThat(info.getRole()).isEqualTo("ADMIN");
         assertThat(info.getDepartmentId()).isEqualTo(4);
         assertThat(info.getTokenVersion()).isZero();
         assertThat(info.getActive()).isTrue();

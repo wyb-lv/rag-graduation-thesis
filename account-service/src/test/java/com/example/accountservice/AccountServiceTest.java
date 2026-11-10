@@ -43,12 +43,12 @@ class AccountServiceTest {
     }
 
     private static CreateAccountRequest createReq() {
-        return new CreateAccountRequest("alice", "alice@hsu.edu.vn", 1L, "Giảng viên", UserRole.EMPLOYEE, "Temp@1234");
+        return new CreateAccountRequest("alice", "alice@hsu.edu.vn", 1L, "Giảng viên", UserRole.USER, "Temp@1234");
     }
 
     private User existing(long id) {
         return User.builder().id(id).username("bob").email("bob@hsu.edu.vn").passwordHash("hash(Old@12345)")
-                .departmentId(1L).role(UserRole.EMPLOYEE).tokenVersion(3).build();
+                .departmentId(1L).role(UserRole.USER).tokenVersion(3).build();
     }
 
     private static void assertStatus(Throwable t, HttpStatus expected) {
@@ -110,13 +110,13 @@ class AccountServiceTest {
         when(users.findById(2L)).thenReturn(Optional.of(user));
         when(users.saveAndFlush(user)).thenReturn(user);
 
-        var res = service.update(2, new UpdateAccountRequest("new@hsu.edu.vn", 9L, "Trưởng khoa", UserRole.MANAGER));
+        var res = service.update(2, new UpdateAccountRequest("new@hsu.edu.vn", 9L, "Trưởng khoa", UserRole.ADMIN));
 
         assertThat(res.username()).isEqualTo("bob");
         assertThat(res.email()).isEqualTo("new@hsu.edu.vn");
         assertThat(res.departmentId()).isEqualTo(9L);
         assertThat(res.position()).isEqualTo("Trưởng khoa");
-        assertThat(res.role()).isEqualTo(UserRole.MANAGER);
+        assertThat(res.role()).isEqualTo(UserRole.ADMIN);
     }
 
     @Test
@@ -124,7 +124,7 @@ class AccountServiceTest {
         when(users.findById(2L)).thenReturn(Optional.of(existing(2)));
         when(users.existsByEmailIgnoreCaseAndIdNot("taken@hsu.edu.vn", 2L)).thenReturn(true);
 
-        assertThatThrownBy(() -> service.update(2, new UpdateAccountRequest("taken@hsu.edu.vn", 1L, null, UserRole.EMPLOYEE)))
+        assertThatThrownBy(() -> service.update(2, new UpdateAccountRequest("taken@hsu.edu.vn", 1L, null, UserRole.USER)))
                 .satisfies(t -> assertStatus(t, HttpStatus.CONFLICT));
     }
 
@@ -134,7 +134,7 @@ class AccountServiceTest {
         when(users.findById(2L)).thenReturn(Optional.of(user));
         when(users.saveAndFlush(user)).thenReturn(user);
 
-        service.update(2, new UpdateAccountRequest("BOB@hsu.edu.vn", 1L, null, UserRole.EMPLOYEE));
+        service.update(2, new UpdateAccountRequest("BOB@hsu.edu.vn", 1L, null, UserRole.USER));
 
         verify(users, never()).existsByEmailIgnoreCaseAndIdNot(any(), anyLong());
     }
@@ -143,7 +143,7 @@ class AccountServiceTest {
     void update_unknownId_404() {
         when(users.findById(99L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.update(99, new UpdateAccountRequest("a@b.c", 1L, null, UserRole.EMPLOYEE)))
+        assertThatThrownBy(() -> service.update(99, new UpdateAccountRequest("a@b.c", 1L, null, UserRole.USER)))
                 .satisfies(t -> assertStatus(t, HttpStatus.NOT_FOUND));
     }
 
