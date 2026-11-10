@@ -4,7 +4,8 @@ import struct
 import wave
 import pytest
 
-from app import speech, config
+from app import config as cfg
+from app.speech import stt, tts
 
 
 def make_wav_bytes(freq: float = 440.0, duration_s: float = 0.5, amplitude: int = 12000) -> bytes:
@@ -26,7 +27,7 @@ def make_wav_bytes(freq: float = 440.0, duration_s: float = 0.5, amplitude: int 
 
 def test_apply_phonetic_fix_replaces_academic_homophones():
     raw = "Cho em hỏi quy chế tính chỉ và điều kiện xét học bỗng tại hắt ét u"
-    fixed = speech.apply_phonetic_fix(raw)
+    fixed = stt.apply_phonetic_fix(raw)
     assert "tín chỉ" in fixed
     assert "học bổng" in fixed
     assert "HSU" in fixed
@@ -34,7 +35,7 @@ def test_apply_phonetic_fix_replaces_academic_homophones():
 
 def test_normalize_academic_text_expands_abbreviations_and_symbols():
     raw = "Theo QĐ-ĐHHS năm 2024-2025, SV ngành CNTT cần ĐTBCTL >= 2.5/4.0 và đạt >= 50% số TC."
-    normalized = speech.normalize_academic_text(raw)
+    normalized = tts.normalize_academic_text(raw)
     assert "Quyết định Đại học Hoa Sen" in normalized
     assert "2024 đến 2025" in normalized
     assert "sinh viên" in normalized
@@ -48,22 +49,35 @@ def test_normalize_academic_text_expands_abbreviations_and_symbols():
 
 def test_preprocess_audio_vad_detects_silence_and_voiced_audio():
     silent_wav = make_wav_bytes(amplitude=0)
-    _, is_speech_silent = speech.preprocess_audio_vad(silent_wav)
+    _, is_speech_silent = stt.preprocess_audio_vad(silent_wav)
     assert is_speech_silent is False
 
     voiced_wav = make_wav_bytes(amplitude=14000)
-    processed_bytes, is_speech_voiced = speech.preprocess_audio_vad(voiced_wav)
+    processed_bytes, is_speech_voiced = stt.preprocess_audio_vad(voiced_wav)
     assert is_speech_voiced is True
     assert len(processed_bytes) > 44
 
 
 def test_validate_audio_bytes_rejects_empty_oversize_and_invalid_magic():
     with pytest.raises(ValueError):
-        speech.validate_audio_bytes(b"", filename="empty.wav")
+        stt.validate_audio_bytes(b"", filename="empty.wav")
 
-    oversized = b"RIFF" + b"\x00" * 4 + b"WAVE" + b"\x00" * (config.MAX_AUDIO_BYTES + 10)
-    with pytest.raises(speech.AudioTooLargeError):
-        speech.validate_audio_bytes(oversized, filename="huge.wav")
+    oversized = b"RIFF" + b"\x00" * 4 + b"WAVE" + b"\x00" * (cfg.MAX_AUDIO_BYTES + 10)
+    with pytest.raises(stt.AudioTooLargeError):
+        stt.validate_audio_bytes(oversized, filename="huge.wav")
 
-    with pytest.raises(speech.UnsupportedAudioFormatError):
-        speech.validate_audio_bytes(b"%PDF-1.7 fake document content", filename="fake.wav")
+    with pytest.raises(stt.UnsupportedAudioFormatError):
+        stt.validate_audio_bytes(b"%PDF-1.7 fake document content", filename="fake.wav")
+
+
+def test_split_stream_segments_keeps_first_segment_short_for_low_ttfb():
+    long_answer = (
+        "Dựa trên Quy chế đào tạo hiện hành của Đại học Hoa Sen, sinh viên cần tích lũy đủ số tín chỉ bắt buộc "
+        "và tự chọn theo khung chương trình đào tạo của từng ngành học cụ thể. "
+        "Ngoài ra, điểm trung bình chung tích lũy toàn khóa phải đạt từ 2.0 trở lên và hoàn thành chuẩn đầu ra ngoại ngữ. "
+        "Sinh viên cũng cần hoàn thành kỳ thực tập tốt nghiệp và khóa luận tốt nghiệp đúng tiến độ."
+    )
+    segments = tts._split_stream_segments(long_answer, first_max_chars=120, next_max_chars=280)
+    assert len(segments) >= 2
+    assert len(segments[0]) <= 120
+    assert all(tts.is_speakable_text(seg) for seg in segments)

@@ -2,10 +2,13 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 import app.api as api
-import app.speech as speech
-import app.rag.query_model as qm
 import app.config as cfg
-from test_speech import make_wav_bytes  # tests/ khong phai package (pytest them no vao sys.path); `tests` tren sys.path co the la goi khac
+import app.rag.query_model as qm
+from app.speech import stt, tts
+try:
+    from test_speech import make_wav_bytes
+except ImportError:
+    from tests.test_speech import make_wav_bytes
 
 
 client = TestClient(api.app)
@@ -19,11 +22,11 @@ def test_health_endpoint():
 
 
 def test_tts_endpoint_returns_audio_mpeg(monkeypatch):
-    async def fake_synthesize_speech_bytes(text: str, voice: str = "", rate: str = "") -> bytes:
+    async def fake_stream_speech_chunks(text: str, voice: str = "", rate: str = ""):
         assert "Quyết định Đại học Hoa Sen" in text
-        return b"ID3-FAKE-MP3-BYTES"
+        yield b"ID3-FAKE-MP3-BYTES"
 
-    monkeypatch.setattr(speech, "synthesize_speech_bytes", fake_synthesize_speech_bytes)
+    monkeypatch.setattr(tts, "stream_speech_chunks", fake_stream_speech_chunks)
 
     resp = client.post(
         "/tts",
@@ -82,7 +85,7 @@ def test_stt_endpoint_with_voiced_wav_applies_phonetic_fix(monkeypatch):
     class FakeGroqClient:
         audio = FakeAudio()
 
-    monkeypatch.setattr(speech, "get_groq_client", lambda: FakeGroqClient())
+    monkeypatch.setattr(stt, "get_groq_client", lambda: FakeGroqClient())
 
     voiced_wav = make_wav_bytes(amplitude=14000)
     resp = client.post(
@@ -108,7 +111,7 @@ def test_ask_voice_stream_endpoint_streams_sse_from_audio(monkeypatch):
     class FakeGroqClient:
         audio = FakeAudio()
 
-    monkeypatch.setattr(speech, "get_groq_client", lambda: FakeGroqClient())
+    monkeypatch.setattr(stt, "get_groq_client", lambda: FakeGroqClient())
     monkeypatch.setattr(
         qm,
         "find_hits",

@@ -1,15 +1,13 @@
+"""Module STT (Speech-to-Text): kiểm tra bảo mật audio, lọc khoảng lặng VAD, Groq Whisper & sửa lỗi đồng âm học vụ HSU."""
 import io
 import math
-import os
 import re
 import struct
 import wave
-from typing import AsyncIterator, Dict, Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
-import edge_tts
-
-from . import config
-from .llm.groq_client import get_client as get_groq_client
+from .. import config as cfg
+from ..llm.groq_client import get_client as get_groq_client
 
 
 class AudioTooLargeError(ValueError):
@@ -21,12 +19,12 @@ class UnsupportedAudioFormatError(ValueError):
 
 
 # ==============================================================================
-# 1. HẰNG SỐ DOMAIN LEXICON & PHONETIC CORRECTION (DÀNH CHO STT HỌC VỤ HSU)
+# HẰNG SỐ DOMAIN LEXICON & PHONETIC CORRECTION (DÀNH CHO STT HỌC VỤ HSU)
 # ==============================================================================
 DOMAIN_PROMPT = (
     "HSU, Đại học Hoa Sen, tín chỉ, học phần, "
     "rút học phần, học phí, học bổng, điểm rèn luyện, GPA, điểm trung bình tích lũy, "
-    "khóa luận tốt nghiệp, thực tập doanh nghiệp, chuẩn đầu ra, TOEIC, bảo lưu, "
+    "khóa luận tốt nghiệp, thực tập doanh nghiệp, chuẩn đầu ra, TOEIC, IELTS, điểm F, bảo lưu, "
     "cảnh báo học vụ, buộc thôi học, niên chế, học kỳ, đăng ký học phần, "
     "phòng Đào tạo, công tác sinh viên, quy chế đào tạo."
 )
@@ -39,48 +37,18 @@ PHONETIC_RULES: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\bđiểm\s+rèn\s+liện\b", re.IGNORECASE), "điểm rèn luyện"),
     (re.compile(r"\bkhóa\s+lận\b", re.IGNORECASE), "khóa luận"),
     (re.compile(r"\bbão\s+lưu\b", re.IGNORECASE), "bảo lưu"),
-    (re.compile(r"\bquy\s+chế\s+tín\s+chĩ\b", re.IGNORECASE), "quy chế tín chỉ"),
+    (re.compile(r"\bchuẩn\s+đầu\s+ga\b", re.IGNORECASE), "chuẩn đầu ra"),
+    (re.compile(r"\bngành\s+lật\b", re.IGNORECASE), "ngành Luật"),
+    (re.compile(r"\bthực\s+tập\s+danh\s+nghiệp\b", re.IGNORECASE), "thực tập doanh nghiệp"),
+    (re.compile(r"\bđiểm\s+ép\b", re.IGNORECASE), "điểm F"),
     (re.compile(r"\bhắt\s*ét\s*u\b", re.IGNORECASE), "HSU"),
     (re.compile(r"\bhắt\s*ét\s*iu\b", re.IGNORECASE), "HSU"),
+    (re.compile(r"\bhát\s*ét\s*u\b", re.IGNORECASE), "HSU"),
     (re.compile(r"\bgi\s*pi\s*ây\b", re.IGNORECASE), "GPA"),
+    (re.compile(r"\bgờ\s*pê\s*a\b", re.IGNORECASE), "GPA"),
     (re.compile(r"\btô\s*ích\b", re.IGNORECASE), "TOEIC"),
+    (re.compile(r"\bai\s*eo(?:\s*sờ)?\b", re.IGNORECASE), "IELTS"),
 ]
-
-# ==============================================================================
-# 2. HẰNG SỐ CHUẨN HÓA VĂN BẢN HỌC VỤ (DÀNH CHO TTS PHÁP QUY HSU)
-# ==============================================================================
-ACADEMIC_TTS_RULES: List[Tuple[re.Pattern, str]] = [
-    # Ký hiệu pháp quy / văn bản hành chính HSU
-    (re.compile(r"\bQĐ-ĐHHS\b"), "Quyết định Đại học Hoa Sen"),
-    (re.compile(r"\bTB-ĐHHS\b"), "Thông báo Đại học Hoa Sen"),
-    (re.compile(r"\bĐHHS\b"), "Đại học Hoa Sen"),
-    (re.compile(r"\bHSU\b"), "Đại học Hoa Sen"),
-    (re.compile(r"\bTP\.\s*HCM\b", re.IGNORECASE), "Thành phố Hồ Chí Minh"),
-    (re.compile(r"\bTPHCM\b", re.IGNORECASE), "Thành phố Hồ Chí Minh"),
-    (re.compile(r"\bSV\b"), "sinh viên"),
-    (re.compile(r"\bGV\b"), "giảng viên"),
-    (re.compile(r"\bCNTT\b"), "Công nghệ thông tin"),
-    (re.compile(r"\bKLTN\b"), "khóa luận tốt nghiệp"),
-    (re.compile(r"\bĐRL\b"), "điểm rèn luyện"),
-    (re.compile(r"\bĐTBCTL\b"), "điểm trung bình chung tích lũy"),
-    (re.compile(r"\bĐTBHK\b"), "điểm trung bình học kỳ"),
-    (re.compile(r"\bTC\b"), "tín chỉ"),
-    (re.compile(r"\bHP\b"), "học phần"),
-    # Xử lý dấu gạch chéo trong năm học và mã quyết định
-    (re.compile(r"(\d{4})\s*-\s*(\d{4})"), r"\1 đến \2"),
-    (re.compile(r"\b(\d+)\s*/\s*(QĐ|TB|KH|HD)\b"), r"\1 \2"),
-    # Ký hiệu so sánh & phần trăm
-    (re.compile(r">=\s*(\d+(?:[.,]\d+)?)"), r"lớn hơn hoặc bằng \1"),
-    (re.compile(r"<=\s*(\d+(?:[.,]\d+)?)"), r"nhỏ hơn hoặc bằng \1"),
-    (re.compile(r"(\d+(?:[.,]\d+)?)\s*%"), r"\1 phần trăm"),
-    # Đọc điểm số thập phân kiểu 2.5 / 4.0
-    (re.compile(r"(\d+)\.(\d+)\s*/\s*(\d+)\.(\d+)"), r"\1 chấm \2 trên \3 chấm \4"),
-    # Loại bỏ ký tự trang trí Markdown làm TTS đọc ngắc ngứ
-    (re.compile(r"[*_`#>-]{2,}"), " "),
-    (re.compile(r"\[([^\]]+)\]\([^)]+\)"), r"\1"),
-]
-
-ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".mp4", ".webm", ".ogg", ".flac", ".mpeg", ".mpga"}
 
 
 def _has_valid_audio_signature(data: bytes) -> bool:
@@ -118,8 +86,8 @@ def validate_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav") -> Non
     if not audio_bytes:
         raise ValueError("File âm thanh rỗng.")
 
-    if len(audio_bytes) > config.MAX_AUDIO_BYTES:
-        max_mb = config.MAX_AUDIO_BYTES / (1024 * 1024)
+    if len(audio_bytes) > cfg.MAX_AUDIO_BYTES:
+        max_mb = cfg.MAX_AUDIO_BYTES / (1024 * 1024)
         raise AudioTooLargeError(f"File âm thanh vượt quá giới hạn tối đa {max_mb:.1f} MB.")
 
     if not _has_valid_audio_signature(audio_bytes):
@@ -189,7 +157,7 @@ def preprocess_audio_vad(audio_bytes: bytes) -> Tuple[bytes, bool]:
             voiced_indices = [
                 idx
                 for idx, chunk in enumerate(chunks)
-                if _compute_rms_db(chunk, sample_width) > config.STT_VAD_ENERGY_THRESHOLD_DB
+                if _compute_rms_db(chunk, sample_width) > cfg.STT_VAD_ENERGY_THRESHOLD_DB
             ]
 
             if not voiced_indices:
@@ -231,12 +199,14 @@ def transcribe_speech(
         }
 
     client = get_groq_client()
-    audio_file = (filename, io.BytesIO(processed_bytes))
-
-    transcription = client.audio.transcriptions.create(
+    # get_groq_client() đặt max_retries=0 cho chat(); dùng with_options để bật retry riêng cho Whisper STT
+    stt_client = client.with_options(max_retries=2, timeout=20.0) if hasattr(client, "with_options") else client
+    # Truyền thẳng processed_bytes (kiểu bytes) thay vì BytesIO để không bị lệch con trỏ EOF khi SDK tự động retry
+    audio_file = (filename, processed_bytes)
+    transcription = stt_client.audio.transcriptions.create(
         file=audio_file,
-        model=os.environ["STT_MODEL"],  # model STT trên Groq, đặt trong ai-service/.env
-        language=config.STT_LANGUAGE,
+        model=cfg.STT_MODEL,
+        language=cfg.STT_LANGUAGE,
         prompt=DOMAIN_PROMPT,
         response_format="json",
         temperature=0.0,
@@ -249,42 +219,3 @@ def transcribe_speech(
         "is_speech": bool(text),
         "text": text,
     }
-
-
-def normalize_academic_text(text: str) -> str:
-    """Chuẩn hóa ký hiệu viết tắt & mã văn bản học vụ HSU trước khi đưa vào bộ đọc TTS."""
-    if not text:
-        return ""
-    cleaned = text
-    for pattern, replacement in ACADEMIC_TTS_RULES:
-        cleaned = pattern.sub(replacement, cleaned)
-    cleaned = re.sub(r"[#*`_~]+", "", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
-
-
-async def stream_speech_chunks(
-    text: str,
-    voice: str = config.TTS_VOICE,
-    rate: str = config.TTS_RATE,
-) -> AsyncIterator[bytes]:
-    """
-    Stream từng chunk âm thanh MP3 trực tiếp từ Edge-TTS Neural ngay khi vừa sinh ra,
-    giúp trình duyệt phát âm thanh đầu tiên (TTFA) nhanh mà không cần gom toàn bộ vào RAM.
-    """
-    communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-    async for chunk in communicate.stream():
-        if chunk.get("type") == "audio" and chunk.get("data"):
-            yield chunk["data"]
-
-
-async def synthesize_speech_bytes(
-    text: str,
-    voice: str = config.TTS_VOICE,
-    rate: str = config.TTS_RATE,
-) -> bytes:
-    """Tổng hợp giọng nói Tiếng Việt (Edge-TTS Neural) và trả về toàn bộ buffer MP3."""
-    audio_chunks = bytearray()
-    async for data in stream_speech_chunks(text=text, voice=voice, rate=rate):
-        audio_chunks.extend(data)
-    return bytes(audio_chunks)

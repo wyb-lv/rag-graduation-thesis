@@ -87,7 +87,7 @@ FIELD_LOAI_VAN_BAN = "loai_van_ban"
 TOP_K_RETRIEVAL = 20
 TOP_K_RERANK = 5  # so doan dua vao ngu canh LLM (moi mode)
 # dense: chi vector `dense` | hybrid: dense + sparse (RRF) | hybrid_rerank: hybrid + jina-reranker
-RAG_MODE = "hybrid_rerank"
+RAG_MODE = os.environ.get("RAG_MODE", "hybrid_rerank")
 RAG_MODES = ("dense", "hybrid", "hybrid_rerank")
 
 
@@ -226,24 +226,30 @@ GROQ_BACKOFF_MAX = 60.0
 GROQ_CACHE_ENABLED = True
 GROQ_CACHE_DIR = os.environ.get("GROQ_CACHE_DIR", os.path.join(BASE_DIR, ".groq_cache"))
 
+# ---- Voice (speech/stt.py & speech/tts.py) ----
+STT_MODEL = _env("STT_MODEL", _env("GROQ_STT_MODEL", "whisper-large-v3"))
+STT_LANGUAGE = _env("STT_LANGUAGE", "vi")
+STT_VAD_ENERGY_THRESHOLD_DB = _env("STT_VAD_ENERGY_THRESHOLD_DB", -38.0, float)
+TTS_VOICE = _env("TTS_VOICE", "vi-VN-HoaiMyNeural")
+TTS_RATE = _env("TTS_RATE", "+0%")
+
+EDGE_TTS_ENABLED = _flag(os.environ.get("EDGE_TTS_ENABLED", "false"))
+
+# Giới hạn dung lượng file âm thanh tối đa (5MB ~ 2.5 phút WAV 16kHz) để chống tràn RAM/OOM
+MAX_AUDIO_BYTES = _env("MAX_AUDIO_BYTES", 5 * 1024 * 1024, int)
+
 # ---- Viet lai cau truy van (rag/query_rewrite.py): Qwen viet lai cau tim kiem, tim dense + sparse cho CA HAI cau roi RRF mot lan tren
 # moi danh sach truoc khi rerank. Them mot lan goi Groq cho moi cau hoi RAG (chia doi ngan sach GROQ_RPM). Chi mode hybrid / hybrid_rerank.
 # Bat mac dinh; dat QUERY_REWRITE_ENABLED=false de tat (vd khi het quota Groq) ----
 QUERY_REWRITE_ENABLED = _flag(os.environ.get("QUERY_REWRITE_ENABLED") or "true")
 QUERY_REWRITE_MAX_CHARS = 300  # cau viet lai dai hon bi cat
 
-# ---- Voice (STT & TTS) ----
-STT_LANGUAGE = os.environ.get("STT_LANGUAGE", "vi")
-# Kích thước mỗi cửa sổ phân tích năng lượng âm thanh (20ms là chuẩn DSP cho tiếng nói)
-VAD_FRAME_MS = int(os.environ.get("VAD_FRAME_MS", "20"))
-# Ngưỡng năng lượng RMS tối thiểu: Khung âm thanh có năng lượng >= 0.01 được coi là có tiếng người
-VAD_ENERGY_THRESHOLD = float(os.environ.get("VAD_ENERGY_THRESHOLD", "0.01"))
-STT_VAD_ENERGY_THRESHOLD_DB = float(os.environ.get("STT_VAD_ENERGY_THRESHOLD_DB", "-38.0"))
-# Thời lượng tiếng nói tối thiểu hợp lệ (250ms). Tiếng click chuột, tiếng thở ngắn < 250ms sẽ bị loại bỏ
-VAD_MIN_SPEECH_MS = int(os.environ.get("VAD_MIN_SPEECH_MS", "250"))
-# Giọng đọc Neural mặc định cho tiếng Việt (Hoài My - Nữ miền Bắc, truyền cảm và rõ chữ)
-TTS_VOICE = os.environ.get("TTS_VOICE", "vi-VN-HoaiMyNeural")
-TTS_RATE = os.environ.get("TTS_RATE", "+0%")
-
-# Giới hạn dung lượng file âm thanh tối đa (5MB ~ 2.5 phút WAV 16kHz) để chống tràn RAM/OOM
-MAX_AUDIO_BYTES = int(os.environ.get("MAX_AUDIO_BYTES", str(5 * 1024 * 1024)))
+# Thêm vào ngay dưới dòng MAX_AUDIO_BYTES trong ai-service/app/config.py:
+CALL_GREETING_TEXT = _env(
+    "CALL_GREETING_TEXT",
+    "Xin chào! Mình là trợ lý học vụ Đại học Hoa Sen. Bạn có câu hỏi nào cần giải đáp không?",
+)
+CALL_NO_SPEECH_TEXT = _env(
+    "CALL_NO_SPEECH_TEXT",
+    "Mình chưa nghe rõ câu hỏi, bạn vui lòng nói lại giúp mình nhé.",
+)

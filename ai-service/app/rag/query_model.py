@@ -37,6 +37,13 @@ BASE_SYSTEM_PROMPT = (
 # Them quy tac chong injection + canary (guard.py). BASE_SYSTEM_PROMPT la ban cu, dung khi GUARD_ENABLED=false.
 SYSTEM_PROMPT = guard.harden_prompt(BASE_SYSTEM_PROMPT)
 
+VOICE_CALL_SYSTEM_PROMPT = guard.harden_prompt(
+    BASE_SYSTEM_PROMPT
+    + "\n4. ĐÂY LÀ CUỘC GỌI THOẠI TRỰC TIẾP (người dùng chỉ nghe âm thanh, không nhìn màn hình): "
+    "Hãy trả lời ngắn gọn trong 2 đến 3 câu súc tích, đi thẳng vào thông tin quan trọng nhất, "
+    "dùng văn phong nói tự nhiên, KHÔNG dùng danh sách gạch đầu dòng hay ký hiệu Markdown."
+)
+
 _qdrant = None
 
 
@@ -187,24 +194,31 @@ def _relevant(hit, mode):
     return True
 
 
-def build_messages(question, hits, history=None):
-    """`history`: [(role, text)] cua cac luot truoc (session); chi vao prompt khi GUARD_ENABLED (prompt cu khong co khai niem nay)."""
+# def build_messages(question, hits, history=None):
+#     """`history`: [(role, text)] cua cac luot truoc (session); chi vao prompt khi GUARD_ENABLED (prompt cu khong co khai niem nay)."""
+#     if cfg.GUARD_ENABLED:
+#         user = guard.build_user_message(question, hits, history)
+#         return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
+#     context = "\n\n".join(f"[Đoạn {i}] Tài liệu: {h['source']}\n{h['text']}" for i, h in enumerate(hits, 1))
+#     user = f"Các đoạn trích:\n\n{context}\n\nCâu hỏi: {question}"
+#     return [{"role": "system", "content": BASE_SYSTEM_PROMPT}, {"role": "user", "content": user}]
+
+def build_messages(question, hits, history=None, voice_mode: bool = False):
+    """`voice_mode=True` dùng prompt khẩu ngữ ngắn gọn dành riêng cho cuộc gọi thoại."""
     if cfg.GUARD_ENABLED:
+        sys_prompt = VOICE_CALL_SYSTEM_PROMPT if voice_mode else SYSTEM_PROMPT
         user = guard.build_user_message(question, hits, history)
-        return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
+        return [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}]
     context = "\n\n".join(f"[Đoạn {i}] Tài liệu: {h['source']}\n{h['text']}" for i, h in enumerate(hits, 1))
     user = f"Các đoạn trích:\n\n{context}\n\nCâu hỏi: {question}"
     return [{"role": "system", "content": BASE_SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
-
 def generate_answer(question, hits, history=None):
     return groq_client.chat(build_messages(question, hits, history))
 
-
-def generate_answer_stream(question, hits, history=None):
-    """Generator cac doan text cua cau tra loi (xem groq_client.chat_stream); guard dau ra co the nem guard.OutputBlocked."""
-    return guard.vet_stream(groq_client.chat_stream(build_messages(question, hits, history)))
-
+def generate_answer_stream(question, hits, history=None, voice_mode: bool = False):
+    """Generator các đoạn text của câu trả lời; hỗ trợ voice_mode cho cuộc gọi trực tiếp."""
+    return guard.vet_stream(groq_client.chat_stream(build_messages(question, hits, history, voice_mode=voice_mode)))
 
 def find_hits(question, top_k=None, mode=None, kho=None, reference_date=None, khoa=None, loai_van_ban=None):
     """Truy van + rerank + loc nguong: cac doan se dua vao LLM. Rong = cau hoi ngoai pham vi tai lieu.
