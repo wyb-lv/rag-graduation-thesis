@@ -217,6 +217,18 @@ GROQ_BACKOFF_BASE = 2.0  # giay; nhan doi moi lan thu lai
 GROQ_BACKOFF_MAX = 60.0
 GROQ_CACHE_DIR = os.environ.get("GROQ_CACHE_DIR", os.path.join(BASE_DIR, ".groq_cache"))
 
+# ---- Voice (speech/stt.py & speech/tts.py) ----
+STT_MODEL = _env("STT_MODEL", _env("GROQ_STT_MODEL", "whisper-large-v3"))
+STT_LANGUAGE = _env("STT_LANGUAGE", "vi")
+STT_VAD_ENERGY_THRESHOLD_DB = _env("STT_VAD_ENERGY_THRESHOLD_DB", -38.0, float)
+TTS_VOICE = _env("TTS_VOICE", "vi-VN-HoaiMyNeural")
+TTS_RATE = _env("TTS_RATE", "+0%")
+
+EDGE_TTS_ENABLED = _env("EDGE_TTS_ENABLED", False, lambda raw: raw.lower() in ("1", "true", "yes", "on"))
+
+# Giới hạn dung lượng file âm thanh tối đa (5MB ~ 2.5 phút WAV 16kHz) để chống tràn RAM/OOM
+MAX_AUDIO_BYTES = _env("MAX_AUDIO_BYTES", 5 * 1024 * 1024, int)
+
 # ---- Viet lai cau truy van (rag/query_rewrite.py): Qwen viet lai cau tim kiem, tim dense + bm25 cho CA HAI cau roi RRF mot lan tren
 # moi danh sach truoc khi rerank. Them mot lan goi Groq cho moi cau hoi RAG (chia doi ngan sach GROQ_RPM).
 # Luon bat ----
@@ -233,12 +245,12 @@ OCR_SCAN_IMAGE_COVER = _env("OCR_SCAN_IMAGE_COVER", 0.5, float)  # trang co anh 
 OCR_IGNORE_LABELS = _env("OCR_IGNORE_LABELS", ["number", "header", "header_image", "footer", "footer_image", "aside_text"],
                           lambda raw: [x.strip() for x in raw.split(",") if x.strip()])
 
-# ---- Voice (STT & TTS) ----
-STT_LANGUAGE = os.environ.get("STT_LANGUAGE", "vi")
-STT_VAD_ENERGY_THRESHOLD_DB = float(os.environ.get("STT_VAD_ENERGY_THRESHOLD_DB", "-38.0"))
-# Giọng đọc Neural mặc định cho tiếng Việt (Hoài My - Nữ miền Bắc, truyền cảm và rõ chữ)
-TTS_VOICE = os.environ.get("TTS_VOICE", "vi-VN-HoaiMyNeural")
-TTS_RATE = os.environ.get("TTS_RATE", "+0%")
-
-# Giới hạn dung lượng file âm thanh tối đa (5MB ~ 2.5 phút WAV 16kHz) để chống tràn RAM/OOM
-MAX_AUDIO_BYTES = int(os.environ.get("MAX_AUDIO_BYTES", str(5 * 1024 * 1024)))
+# Thêm vào ngay dưới dòng MAX_AUDIO_BYTES trong ai-service/app/config.py:
+CALL_GREETING_TEXT = _env(
+    "CALL_GREETING_TEXT",
+    "Xin chào! Mình là trợ lý học vụ Đại học Hoa Sen. Bạn có câu hỏi nào cần giải đáp không?",
+)
+CALL_NO_SPEECH_TEXT = _env(
+    "CALL_NO_SPEECH_TEXT",
+    "Mình chưa nghe rõ câu hỏi, bạn vui lòng nói lại giúp mình nhé.",
+)

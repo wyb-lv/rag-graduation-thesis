@@ -227,6 +227,51 @@ export async function synthesizeSpeech(text: string, signal?: AbortSignal): Prom
     signal,
   })
 
+  if (res.status === 204) throw new Error('Không có nội dung văn bản để đọc.')
   await assertOk(res, 'Lỗi tổng hợp giọng nói')
   return res.blob()
 }
+
+/**
+ * Bắt đầu cuộc gọi: Nhận luồng âm thanh câu chào mở đầu từ Backend (POST /call/greeting).
+ */
+export async function fetchCallGreetingAudio(signal?: AbortSignal): Promise<Blob> {
+  const res = await authFetch(buildAiUrl('/call/greeting'), {
+    method: 'POST',
+    signal,
+  })
+  await assertOk(res, 'Không thể khởi tạo cuộc gọi')
+  return res.blob()
+}
+
+/**
+ * Gửi gói ghi âm lượt nói của người dùng xuống Backend (POST /call/turn)
+ * và nhận trực tiếp âm thanh MP3 câu trả lời của AI (hoặc null nếu server trả 204 do khoảng lặng).
+ */
+export async function sendCallTurnAudio(
+  audioBlob: Blob,
+  filename = 'turn.webm',
+  signal?: AbortSignal
+): Promise<{ audio: Blob | null; action: string }> {
+  const formData = new FormData()
+  formData.append('file', audioBlob, filename)
+  const khoa = getKhoa()
+  if (khoa !== undefined) {
+    formData.append('khoa', String(khoa))
+  }
+
+  const res = await authFetch(buildAiUrl('/call/turn'), {
+    method: 'POST',
+    body: formData,
+    signal,
+  })
+
+  const action = res.headers.get('X-Call-Action') || 'listen'
+  if (res.status === 204) {
+    return { audio: null, action }
+  }
+  await assertOk(res, 'Lỗi xử lý lượt hội thoại')
+  const audio = await res.blob()
+  return { audio: audio.size > 0 ? audio : null, action }
+}
+

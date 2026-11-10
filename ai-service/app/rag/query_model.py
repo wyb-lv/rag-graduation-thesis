@@ -34,6 +34,13 @@ BASE_SYSTEM_PROMPT = (
 # Them quy tac chong injection + canary (guard.py).
 SYSTEM_PROMPT = guard.harden_prompt(BASE_SYSTEM_PROMPT)
 
+VOICE_CALL_SYSTEM_PROMPT = guard.harden_prompt(
+    BASE_SYSTEM_PROMPT
+    + "\n4. ĐÂY LÀ CUỘC GỌI THOẠI TRỰC TIẾP (người dùng chỉ nghe âm thanh, không nhìn màn hình): "
+    "Hãy trả lời ngắn gọn trong 2 đến 3 câu súc tích, đi thẳng vào thông tin quan trọng nhất, "
+    "dùng văn phong nói tự nhiên, KHÔNG dùng danh sách gạch đầu dòng hay ký hiệu Markdown."
+)
+
 _qdrant = None
 
 
@@ -166,19 +173,18 @@ def rerank(question, hits, top_k=None):
     return [{**h, "rerank_score": s} for h, s in ranked[:top_k or cfg.TOP_K_RERANK]]
 
 
-def build_messages(question, hits, history=None):
-    """`history`: [(role, text)] cua cac luot truoc (session)."""
+def build_messages(question, hits, history=None, voice_mode=False):
+    """`history`: [(role, text)] cua cac luot truoc (session); `voice_mode`: prompt khau ngu ngan gon cho cuoc goi thoai."""
     user = guard.build_user_message(question, hits, history)
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": VOICE_CALL_SYSTEM_PROMPT if voice_mode else SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
 
 def generate_answer(question, hits, history=None):
     return groq_client.chat(build_messages(question, hits, history))
 
-
-def generate_answer_stream(question, hits, history=None):
-    """Generator cac doan text cua cau tra loi (xem groq_client.chat_stream); guard dau ra co the nem guard.OutputBlocked."""
-    return guard.vet_stream(groq_client.chat_stream(build_messages(question, hits, history)))
+def generate_answer_stream(question, hits, history=None, voice_mode: bool = False):
+    """Generator các đoạn text của câu trả lời; hỗ trợ voice_mode cho cuộc gọi trực tiếp."""
+    return guard.vet_stream(groq_client.chat_stream(build_messages(question, hits, history, voice_mode=voice_mode)))
 
 
 def find_hits(question, top_k=None, kho=None, reference_date=None, khoa=None, loai_van_ban=None):

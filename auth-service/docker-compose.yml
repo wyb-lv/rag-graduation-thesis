@@ -1,0 +1,46 @@
+name: auth-service
+
+services:
+  # ── Cơ sở dữ liệu Postgres cho Auth ───────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-document-auth
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Bao1234567890@
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Ứng dụng Spring Boot Auth Service (khi cần chạy trong Docker) ───────────
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: auth-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8081"   # REST Port
+      - "9091:9091"   # gRPC Port
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: Bao1234567890@
+      SERVER_PORT: 8081
+      GRPC_SERVER_PORT: 9091
+      APPLICATION_JWT_SECRET_KEY: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+
+volumes:
+  postgres_data:
+    name: auth-service_postgres_data

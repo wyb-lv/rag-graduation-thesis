@@ -10,11 +10,9 @@ import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFacto
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.amqp.autoconfigure.SimpleRabbitListenerContainerFactoryConfigurer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.task.SimpleAsyncTaskExecutor;
 
 import java.time.Duration;
 
@@ -28,12 +26,11 @@ public class RabbitMQConfig {
     public static final String OCR_DEAD_EXCHANGE = "file-service.ocr.dead";
     public static final String OCR_DEAD_QUEUE = "file-service.ocr.jobs.dead";
 
-    // Exchange/queue cho ai-service embed (fanout để có thể thêm consumer khác sau này)
+    // Exchange gửi job embed sang ai-service (ai-service tự khai báo queue của nó)
     public static final String EMBED_EXCHANGE = "file-service.embed";
     public static final String EMBED_ROUTING_KEY = "embed.jobs";
 
-
-    // Chặn vòng lặp vô hạn khi một file làm sập JVM (chết trước khi ack nên message cứ được giao lại)
+    // Chặn vòng lặp vô hạn khi một file làm ai-service chết trước khi ack (message cứ được giao lại); hết lượt thì vào dead-letter queue
     private static final int MAX_DELIVERIES = 5;
 
     @Bean
@@ -71,10 +68,6 @@ public class RabbitMQConfig {
         return BindingBuilder.bind(ocrDeadQueue()).to(ocrDeadExchange()).with(OCR_ROUTING_KEY);
     }
 
-    /**
-     * Exchange để file-service publish embed job sang ai-service.
-     * ai-service tự khai báo queue và binding của nó khi start.
-     */
     @Bean
     public DirectExchange embedExchange() {
         return new DirectExchange(EMBED_EXCHANGE, true, false);
@@ -82,24 +75,7 @@ public class RabbitMQConfig {
 
     @Bean
     public MessageConverter messageConverter() {
-
         return new JacksonJsonMessageConverter();
-    }
-
-    // Platform thread vì Tesseract (JNI) ghim carrier thread của virtual thread, mà Boot lại mặc định dùng
-    // virtual thread cho listener. Prefetch 1 vì mỗi job OCR chạy lâu (mặc định 250).
-    @Bean
-    public SimpleRabbitListenerContainerFactory ocrListenerContainerFactory(
-            SimpleRabbitListenerContainerFactoryConfigurer configurer,
-            ConnectionFactory connectionFactory,
-            @Value("${ocr.threads}") int threads) {
-        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
-        configurer.configure(factory, connectionFactory);
-        factory.setTaskExecutor(new SimpleAsyncTaskExecutor("ocr-"));
-        factory.setConcurrentConsumers(threads);
-        factory.setMaxConcurrentConsumers(threads);
-        factory.setPrefetchCount(1);
-        return factory;
     }
 
     // Retry vô hạn: hết lượt retry khi DB đang sập thì message bị bỏ và tài liệu kẹt PROCESSING

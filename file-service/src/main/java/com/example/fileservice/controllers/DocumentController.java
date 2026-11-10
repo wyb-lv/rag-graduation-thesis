@@ -22,6 +22,24 @@ public class DocumentController {
     private final DocumentService documentService;
     private final EmbedJobPublisher embedJobPublisher;
 
+    private static Map<String, String> success(String message) {
+        Map<String, String> response = new LinkedHashMap<>();
+        response.put("status", "success");
+        response.put("message", message);
+        return response;
+    }
+
+    private static ResponseEntity<Map<String, String>> failure(String error) {
+        Map<String, String> response = new LinkedHashMap<>();
+        response.put("status", "error");
+        response.put("error", error);
+        return ResponseEntity.badRequest().body(response);
+    }
+
+    private static ResponseEntity<Map<String, String>> failure(Exception e) {
+        return failure("Lỗi: " + e.getMessage());
+    }
+
     @GetMapping("/api/documents")
     public ResponseEntity<List<Document>> getAllDocuments() {
         return ResponseEntity.ok(documentService.getAllDocuments());
@@ -30,36 +48,28 @@ public class DocumentController {
     @PostMapping("/api/documents/upload")
     public ResponseEntity<Map<String, String>> uploadFile(@RequestParam("file") MultipartFile file,
                                                           @RequestParam("title") String title) {
-        Map<String, String> response = new LinkedHashMap<>();
         try {
             Document doc = documentService.storeFile(file, title);
-            response.put("status", "success");
-            response.put("message", "Upload file thành công!");
+            Map<String, String> response = success("Upload file thành công!");
             response.put("id", String.valueOf(doc.getId()));
             response.put("ocrStatus", doc.getOcrStatus().name());
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            response.put("status", "error");
-            response.put("error", "Lỗi: " + e.getMessage());
-            return ResponseEntity.badRequest().body(response);
+            return failure(e);
         }
     }
 
     @DeleteMapping("/api/documents/{id}")
     public ResponseEntity<Map<String, String>> deleteFile(@PathVariable Long id) {
-        Map<String, String> response = new LinkedHashMap<>();
         try {
             documentService.deleteDocument(id);
-            response.put("status", "success");
-            response.put("message", "Xóa file thành công!");
-            return ResponseEntity.ok(response);
+            return ResponseEntity.ok(success("Xóa file thành công!"));
         } catch (Exception e) {
-            response.put("status", "error");
-            response.put("error", "Lỗi: " + e.getMessage());
-            return ResponseEntity.badRequest().body(response);
+            return failure(e);
         }
     }
 
+    // Cũng là "link" để ai-service tải file về OCR
     @GetMapping("/api/documents/download/{id}")
     public ResponseEntity<Resource> downloadFile(@PathVariable Long id) {
         try {
@@ -93,16 +103,11 @@ public class DocumentController {
 
     @PostMapping("/api/documents/{id}/ocr")
     public ResponseEntity<Map<String, String>> reprocessOcr(@PathVariable Long id) {
-        Map<String, String> response = new LinkedHashMap<>();
         try {
             documentService.reprocessOcr(id);
-            response.put("status", "success");
-            response.put("message", "Đã đưa tài liệu vào hàng chờ OCR");
-            return ResponseEntity.accepted().body(response);
+            return ResponseEntity.accepted().body(success("Đã đưa tài liệu vào hàng chờ OCR"));
         } catch (Exception e) {
-            response.put("status", "error");
-            response.put("error", "Lỗi: " + e.getMessage());
-            return ResponseEntity.badRequest().body(response);
+            return failure(e);
         }
     }
 
@@ -112,22 +117,15 @@ public class DocumentController {
      */
     @PostMapping("/api/documents/{id}/embed")
     public ResponseEntity<Map<String, String>> triggerEmbed(@PathVariable Long id) {
-        Map<String, String> response = new LinkedHashMap<>();
         try {
             Document doc = documentService.getDocumentById(id);
             if (doc.getOcrStatus() != OcrStatus.COMPLETED) {
-                response.put("status", "error");
-                response.put("error", "Tài liệu chưa hoàn thành OCR (trạng thái: " + doc.getOcrStatus() + ")");
-                return ResponseEntity.badRequest().body(response);
+                return failure("Tài liệu chưa hoàn thành OCR (trạng thái: " + doc.getOcrStatus() + ")");
             }
-            embedJobPublisher.publish(doc.getId(), doc.getTitle(), null);
-            response.put("status", "success");
-            response.put("message", "Đã gửi yêu cầu embed tài liệu vào hàng chờ.");
-            return ResponseEntity.accepted().body(response);
+            embedJobPublisher.publish(doc.getId(), doc.getTitle());
+            return ResponseEntity.accepted().body(success("Đã gửi yêu cầu embed tài liệu vào hàng chờ."));
         } catch (Exception e) {
-            response.put("status", "error");
-            response.put("error", "Lỗi: " + e.getMessage());
-            return ResponseEntity.badRequest().body(response);
+            return failure(e);
         }
     }
 }
