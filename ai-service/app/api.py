@@ -1,19 +1,18 @@
-"""API HTTP cho FE goi RAG hybrid (dense + sparse + rerank), dung lai logic trong query_model.py.
+"""API HTTP cho FE goi RAG hybrid (dense + bm25 + rerank), dung lai logic trong query_model.py.
 
 Chay (trong thu muc Model):
-    uvicorn api:app --reload --port 8000
+    uvicorn app.api:app --reload --port 8000
 
 FE goi:
-    POST /ask  { "question": "...", "mode": "hybrid_rerank", "kho": "...", "reference_date": "2026-01-31",
-                 "loai_van_ban": ["thong_bao"] }
+    POST /ask  { "question": "...", "kho": "...", "reference_date": "2026-01-31", "loai_van_ban": ["thong_bao"] }
       ->  { "answer": "...", "in_scope": true, "sources": [...] }
     Chi `question` la bat buoc. Khong tim thay quy dinh phu hop -> in_scope=false, sources=[], khong goi LLM.
-    Them tuy chon (chi khi SESSION_ENABLED): "session_id" (UUID), "reset"; response them "session_id" (xem API.md).
+    Them tuy chon: "session_id" (UUID), "reset"; response luon co "session_id" (xem API.md).
     POST /ask/stream  (cung body)  ->  text/event-stream (SSE), xem API.md:
       data: {"event": "sources", "in_scope": true, "sources": [...]}
       data: {"event": "delta", "text": "..."}      (lap lai)
       data: [DONE]                                   (hoac data: {"event": "error", "detail": "..."})
-BGE-M3 va reranker nap ngay khi server khoi dong (thread nen, tat bang WARMUP=0) va nam trong bo nho cho cac
+BGE-M3 va reranker nap ngay khi server khoi dong (thread nen) va nam trong bo nho cho cac
 request sau. Request toi khi dang nap se cho nap xong roi chay tiep. GET /health -> "models": pending/ready/error.
 """
 import json
@@ -37,6 +36,7 @@ from . import config as cfg
 from . import conversations, qdrant_setup, session
 from .ingest import embed_consumer, embed_service
 from .models import encoders
+from .ocr import consumer as ocr_consumer
 from .rag import query_model as qm
 from .router import guard, router_llm
 from .router.router_llm import Action
@@ -54,7 +54,9 @@ class _SuppressH2CUpgradeWarning(logging.Filter):
 
 
 log.addFilter(_SuppressH2CUpgradeWarning())
-_warmup = {"status": "disabled" if not cfg.WARMUP else "pending"}
+_warmup = {"status": "pending"}
+_warmed = threading.Event()  # set = khong co warm-up dang chay; lifespan clear() ngay truoc khi bat thread, warm_up() set lai khi xong
+_warmed.set()
 
 WARMUP_TEXT = "Thí sinh được đăng ký tối đa bao nhiêu nguyện vọng?"
 
@@ -64,14 +66,15 @@ def warm_up():
     start = time.perf_counter()
     try:
         encoders.encode_texts([WARMUP_TEXT])
-        if cfg.RAG_MODE == "hybrid_rerank":  # mode khac khong can reranker, de danh VRAM
-            encoders.rerank_scores(WARMUP_TEXT, [WARMUP_TEXT])
+        encoders.rerank_scores(WARMUP_TEXT, [WARMUP_TEXT])
     except Exception:
         _warmup["status"] = "error"
         log.exception("Warmup model that bai, model se duoc nap lai o request dau tien")
-        return
-    _warmup["status"] = "ready"
-    log.info("Warmup model xong sau %.1fs", time.perf_counter() - start)
+    else:
+        _warmup["status"] = "ready"
+        log.info("Warmup model xong sau %.1fs", time.perf_counter() - start)
+    finally:
+        _warmed.set()  # thanh cong hay that bai deu tha cac request dang doi
 
 
 @asynccontextmanager
@@ -79,24 +82,21 @@ async def lifespan(app):
     # Nhanh trong HYBRID_LEGS phai co vector trong collection; thieu thi RuntimeError, server khong khoi dong
     qdrant_setup.validate_legs(qm.get_qdrant())
     # Thread nen: server nhan request ngay (/health tra loi duoc), khong bat FE cho tren connection refused
-    if cfg.WARMUP:
-        threading.Thread(target=warm_up, name="model-warmup", daemon=True).start()
-    if cfg.ROUTER_ENABLED and not cfg.GEMINI_API_KEY:
-        log.warning("ROUTER_ENABLED nhung thieu GEMINI_API_KEY: router se loi o moi request va cau hoi di thang vao RAG")
-    if cfg.SESSION_ENABLED:
-        try:
-            session.get_store()  # nap LlamaIndex + tao engine SQLite luc khoi dong, khong doi den request dau tien
-        except Exception as e:  # service van khoi dong; request dau tien se thu lai
-            log.warning("khong khoi tao duoc session store (%s): se thu lai o request dau tien", type(e).__name__)
-    if cfg.CONVERSATIONS_ENABLED:
-        if not cfg.SESSION_ENABLED:
-            log.warning("MONGODB_URI da dat nhung SESSION_ENABLED=false: khong co session_id nen khong luu cuoc hoi thoai nao")
-        try:
-            await conversations.ensure_indexes()
-        except Exception as e:  # service van khoi dong; ghi luot hoi dap se loi (va chi ghi log) cho den khi MongoDB len
-            log.warning("khong tao duoc index MongoDB (%s): kiem tra MONGODB_URI", type(e).__name__)
-    # Khoi dong RabbitMQ consumer de nhan job embed tu file-service (chi chay khi RABBITMQ_URL duoc cau hinh)
+    _warmed.clear()
+    threading.Thread(target=warm_up, name="model-warmup", daemon=True).start()
+    if not (cfg.GEMINI_API_KEY and cfg.ROUTER_MODEL):
+        log.warning("thieu GEMINI_API_KEY / GEMINI_MODEL: router se loi o moi request va cau hoi di thang vao RAG")
+    try:
+        session.get_store()  # nap LlamaIndex + tao engine SQLite luc khoi dong, khong doi den request dau tien
+    except Exception as e:  # service van khoi dong; request dau tien se thu lai
+        log.warning("khong khoi tao duoc session store (%s): se thu lai o request dau tien", type(e).__name__)
+    try:
+        await conversations.ensure_indexes()
+    except Exception as e:  # service van khoi dong; ghi luot hoi dap se loi (va chi ghi log) cho den khi MongoDB len
+        log.warning("khong tao duoc index MongoDB (%s): kiem tra MONGODB_URI", type(e).__name__)
+    # Khoi dong RabbitMQ consumer de nhan job embed tu file-service; broker chua len thi consumer tu thu ket noi lai
     embed_consumer.start_consumer()
+    ocr_consumer.start_consumer()  # OCR (PDF / DOCX / ảnh) thay cho OCR cũ của file-service
     yield
 
 
@@ -108,12 +108,11 @@ app = FastAPI(title="RAG QA API", lifespan=lifespan)
 class AskRequest(BaseModel):
     question: str
     top_k: Optional[int] = Field(default=None, ge=1, le=10)  # so doan lam ngu canh; mac dinh top_k_rerank
-    mode: Optional[Literal["dense", "hybrid", "hybrid_rerank"]] = None  # mac dinh RAG_MODE
     kho: Optional[str] = None
     reference_date: Optional[date] = None  # loc van ban con hieu luc tai ngay nay; mac dinh hom nay
     khoa: Optional[int] = Field(default=None, ge=1990, le=2100)  # khoa cua sinh vien; chi lay van ban ap dung cho khoa nay
     loai_van_ban: Optional[List[str]] = None  # chi tim trong cac loai van ban nay (vd ["thong_bao", "quy_che"])
-    session_id: Optional[str] = None  # UUID cua cuoc tro chuyen; bo trong thi server tao moi. Bi bo qua khi SESSION_ENABLED=false
+    session_id: Optional[str] = None  # UUID cua cuoc tro chuyen; bo trong thi server tao moi
     reset: bool = False  # xoa lich su session truoc khi xu ly request nay
 
 
@@ -131,7 +130,7 @@ class AskResponse(BaseModel):
     sources: List[Source]
     # rag | greeting | thanks | goodbye | capability | meta | blocked | off_topic | clarify (do router_llm.py quyet dinh)
     intent: str = Intent.RAG.value
-    session_id: Optional[str] = None  # chi co khi SESSION_ENABLED
+    session_id: str  # UUID cua cuoc tro chuyen (do client gui hoac server tao)
 
 
 @app.get("/health")
@@ -140,9 +139,7 @@ def health():
 
 
 def _question(payload):
-    question = payload.question.strip()
-    if cfg.GUARD_ENABLED:
-        question = guard.normalize_question(question)  # chi con zero width / ky tu dieu khien cung la cau hoi rong
+    question = guard.normalize_question(payload.question.strip())  # chi con zero width / ky tu dieu khien cung la cau hoi rong
     if not question:
         raise HTTPException(status_code=400, detail="question khong duoc de trong")
     return question
@@ -173,7 +170,7 @@ def _sources(hits):
 
 @dataclass
 class _Turn:
-    """Moi thu cua mot request: cau hoi chuan hoa, session dang mo (neu bat) va khoa / kho hieu luc."""
+    """Moi thu cua mot request: cau hoi chuan hoa, session dang mo va khoa / kho hieu luc."""
     question: str
     session: Any = None  # session.Session; giu lock cho den _end()
     sid: Optional[str] = None
@@ -194,21 +191,22 @@ def _valid_facts(raw):
 
 
 async def _begin(payload, request):
-    """Chuan hoa cau hoi, mo session (khi SESSION_ENABLED) va gop khoa / kho: gia tri trong request de len gia tri da luu.
+    """Chuan hoa cau hoi, mo session va gop khoa / kho: gia tri trong request de len gia tri da luu.
     reference_date khong bao gio duoc luu."""
     t = _Turn(_question(payload))
-    stored = {}
-    if cfg.SESSION_ENABLED:
-        t.sid = str(uuid.uuid4()) if payload.session_id is None else session.parse_id(payload.session_id)
-        if t.sid is None:
-            raise HTTPException(status_code=400, detail="session_id phai la UUID")
-        t.user_id = request.headers.get(cfg.SESSION_USER_HEADER)
-        key = session.key_for(t.sid, t.user_id)
-        try:
-            t.session = await (await session.store()).open(key, reset=payload.reset)
-        except Exception as e:  # loi session store khong duoc lam hong cau hoi: tra loi khong co lich su, chi ghi loai loi
-            log.warning("session %s: khong mo duoc session (%s), tra loi khong co lich su", session.digest(key), type(e).__name__)
-        stored = _valid_facts(t.session.facts) if t.session else {}
+    if not _warmed.is_set():  # dang nap model: doi xong roi moi chay router / Groq, tranh timeout do tranh CPU voi luc nap; chua giu lock session
+        if not await run_in_threadpool(_warmed.wait, cfg.WARMUP_WAIT_S):
+            log.warning("warm-up chua xong sau %.0fs: chay tiep, router / viet lai co the timeout", cfg.WARMUP_WAIT_S)
+    t.sid = str(uuid.uuid4()) if payload.session_id is None else session.parse_id(payload.session_id)
+    if t.sid is None:
+        raise HTTPException(status_code=400, detail="session_id phai la UUID")
+    t.user_id = request.headers.get(cfg.SESSION_USER_HEADER)
+    key = session.key_for(t.sid, t.user_id)
+    try:
+        t.session = await (await session.store()).open(key, reset=payload.reset)
+    except Exception as e:  # loi session store khong duoc lam hong cau hoi: tra loi khong co lich su, chi ghi loai loi
+        log.warning("session %s: khong mo duoc session (%s), tra loi khong co lich su", session.digest(key), type(e).__name__)
+    stored = _valid_facts(t.session.facts) if t.session else {}
     t.khoa = payload.khoa if payload.khoa is not None else stored.get("khoa")
     t.kho = payload.kho or stored.get("kho")
     return t
@@ -225,18 +223,16 @@ def _log_router(t, routed, action):
         "router intent=%s conf=%s action=%s model=%s cached=%s fallback=%s failure=%s latency_ms=%d session=%s history_turns=%d note=%s",
         d.intent if d else "-", f"{d.confidence:.2f}" if d else "-", action.intent.value, routed.model, routed.cached,
         "rag" if d is None else "-", routed.failure or "-", routed.latency_ms,
-        session.digest(t.sid) if t.sid else "-", len(t.session.history) // 2 if t.session else 0, action.note or "-",
+        session.digest(t.sid), len(t.session.history) // 2 if t.session else 0, action.note or "-",
     )
 
 
 async def _plan(t):
     """Quyet dinh cho request: Action co `answer` = tra loi co dinh (khong truy van / goi LLM), khong thi di tiep RAG voi `action.query`.
 
-    ROUTER_ENABLED: mot lan goi router (cau hoi + lich su + khoa / kho + co previous_was_clarify) tu suy luan y dinh; khong co
-    luat tu khoa nao. Router tat hoac loi (timeout, quota, JSON hong, het ngan sach RPM) thi cau hoi di thang vao RAG, van duoc
-    chuan hoa, quet doan trich, prompt co rao va guard dau ra bao ve; khong bao gio tra off_topic / clarify khi router loi."""
-    if not cfg.ROUTER_ENABLED:
-        return Action(Intent.RAG, query=t.question)
+    Mot lan goi router (cau hoi + lich su + khoa / kho + co previous_was_clarify) tu suy luan y dinh; khong co
+    luat tu khoa nao. Router loi (timeout, quota, JSON hong, het ngan sach RPM, thieu khoa / model) thi cau hoi di thang vao RAG,
+    van duoc chuan hoa, quet doan trich, prompt co rao va guard dau ra bao ve; khong bao gio tra off_topic / clarify khi router loi."""
     history = t.session.history if t.session else []
     facts, previous_was_clarify = {"khoa": t.khoa, "kho": t.kho}, bool(t.session and t.session.previous_was_clarify)
     routed = await router_llm.resolve(t.question, history, facts, previous_was_clarify)
@@ -247,7 +243,7 @@ async def _plan(t):
 
 
 def _pipeline_kwargs(t, payload):
-    return dict(top_k=payload.top_k, mode=payload.mode, kho=t.kho, reference_date=payload.reference_date, khoa=t.khoa,
+    return dict(top_k=payload.top_k, kho=t.kho, reference_date=payload.reference_date, khoa=t.khoa,
                 loai_van_ban=payload.loai_van_ban)
 
 
@@ -263,14 +259,13 @@ async def _remember(t, answer, intent, store=True):
             await t.session.add_turn(t.question, answer, intent.value, {"khoa": t.khoa, "kho": t.kho})
         except Exception as e:
             log.warning("session %s: khong luu duoc luot nay (%s)", session.digest(t.sid), type(e).__name__)
-    if cfg.CONVERSATIONS_ENABLED and t.sid:
-        try:
-            await conversations.add_turn(t.sid, t.user_id, t.question, answer, intent.value)
-        except Exception as e:
-            log.warning("session %s: khong luu duoc vao kho hoi thoai (%s)", session.digest(t.sid), type(e).__name__)
+    try:
+        await conversations.add_turn(t.sid, t.user_id, t.question, answer, intent.value)
+    except Exception as e:
+        log.warning("session %s: khong luu duoc vao kho hoi thoai (%s)", session.digest(t.sid), type(e).__name__)
 
 
-@app.post("/ask", response_model=AskResponse, response_model_exclude_unset=True)  # exclude_unset: khong co session thi khong co khoa session_id
+@app.post("/ask", response_model=AskResponse)
 async def ask(payload: AskRequest, request: Request):
     t = await _begin(payload, request)
     try:
@@ -288,8 +283,7 @@ async def ask(payload: AskRequest, request: Request):
             intent = Intent.BLOCKED if answer == cfg.GUARD_REFUSAL_ANSWER else Intent.RAG  # guard dau ra da chan cau tra loi
             store = intent is Intent.RAG
         await _remember(t, answer, intent, store)
-        return AskResponse(answer=answer, in_scope=in_scope, sources=_sources(hits), intent=intent.value,
-                           **({"session_id": t.sid} if t.sid else {}))
+        return AskResponse(answer=answer, in_scope=in_scope, sources=_sources(hits), intent=intent.value, session_id=t.sid)
     finally:
         _end(t)
 
@@ -326,7 +320,7 @@ async def ask_stream(payload: AskRequest, request: Request):
         raise
     sources = [s.model_dump() for s in _sources(hits)]
     # `intent` chi them vao su kien khi khac rag, de su kien cua cac cau hoi RAG giu nguyen tung byte
-    extra = {**({"session_id": t.sid} if t.sid else {}), **({} if intent is Intent.RAG else {"intent": intent.value})}
+    extra = {"session_id": t.sid, **({} if intent is Intent.RAG else {"intent": intent.value})}
 
     async def events():
         try:
@@ -378,8 +372,6 @@ class Conversation(ConversationSummary):
 
 def _conversation_owner(request, *, required=False):
     """X-User-Id do gateway gan sau khi xac thuc; `required`: thieu thi 401 (liet ke can biet la cua ai)."""
-    if not cfg.CONVERSATIONS_ENABLED:
-        raise HTTPException(status_code=503, detail="Chua bat luu tru hoi thoai (thieu MONGODB_URI)")
     user_id = request.headers.get(cfg.SESSION_USER_HEADER)
     if required and not user_id:
         raise HTTPException(status_code=401, detail=f"Thieu header {cfg.SESSION_USER_HEADER} (dang nhap qua api-gateway)")
@@ -425,8 +417,7 @@ async def get_conversation(session_id: str, request: Request):
 async def delete_conversation(session_id: str, request: Request):
     user_id, sid = _conversation_owner(request), _conversation_id(session_id)
     with _archive_errors():
-        if cfg.SESSION_ENABLED:  # khong de cuoc hoi thoai da xoa van nam trong prompt cua luot sau
-            (await (await session.store()).open(session.key_for(sid, user_id), reset=True)).release()
+        (await (await session.store()).open(session.key_for(sid, user_id), reset=True)).release()  # khong de cuoc hoi thoai da xoa van nam trong prompt cua luot sau
         if not await conversations.delete(sid, user_id):
             raise HTTPException(status_code=404, detail="Khong co cuoc hoi thoai nay")
     return {"session_id": sid, "message": "Da xoa cuoc hoi thoai."}
@@ -455,7 +446,7 @@ class EmbedResponse(BaseModel):
 def embed_document(payload: EmbedRequest):
     """Embed văn bản của một tài liệu vào Qdrant để phục vụ RAG.
 
-    - Tách thành đoạn → BGE-M3 (dense + sparse) → upsert Qdrant.
+    - Tách thành đoạn → BGE-M3 (dense) + BM25 → upsert Qdrant.
     - Idempotent: xóa vector cũ của `document_id` trước khi thêm mới.
     - Thường được gọi tự động từ RabbitMQ consumer sau khi file-service OCR xong.
     - Có thể gọi thủ công để re-index hoặc kiểm thử.
@@ -516,6 +507,16 @@ def _read_and_validate_audio(file: UploadFile) -> tuple[bytes, str]:
     return content, filename
 
 
+def _transcribe(file: UploadFile) -> dict:
+    """Kiểm tra file âm thanh rồi chuyển thành văn bản; lỗi nào cũng thành HTTPException."""
+    content, filename = _read_and_validate_audio(file)
+    try:
+        return stt.transcribe_speech(content, filename=filename)
+    except Exception as e:
+        log.exception("Lỗi xử lý STT")
+        raise HTTPException(status_code=500, detail=f"Lỗi nhận diện giọng nói: {str(e)}")
+
+
 @app.post("/stt", summary="Chuyển giọng nói thành văn bản (Dành cho nút Mic ghi âm)")
 def speech_to_text(
     file: UploadFile = File(...),
@@ -524,14 +525,7 @@ def speech_to_text(
     Nhận file ghi âm từ người dùng, kiểm tra bảo mật (<= 5MB & Magic Bytes),
     thực hiện VAD lọc khoảng lặng + Groq Whisper + HSU Phonetic Post-Correction.
     """
-    content, filename = _read_and_validate_audio(file)
-    try:
-        return stt.transcribe_speech(content, filename=filename)
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("Lỗi xử lý STT")
-        raise HTTPException(status_code=500, detail=f"Lỗi nhận diện giọng nói: {str(e)}")
+    return _transcribe(file)
 
 
 @app.post(
@@ -541,7 +535,6 @@ def speech_to_text(
 def ask_voice_stream(
     file: UploadFile = File(...),
     top_k: int = Form(cfg.TOP_K_RERANK),
-    mode: Literal["dense", "hybrid", "hybrid_rerank"] = Form(cfg.RAG_MODE),
     kho: Optional[str] = Form(None),
     reference_date: Optional[date] = Form(None),
     khoa: Optional[int] = Form(None),
@@ -554,15 +547,7 @@ def ask_voice_stream(
       3. Đưa thẳng văn bản câu hỏi vào pipeline RAG (`find_hits` + `generate_answer_stream`).
       4. Trả về luồng SSE gồm: `transcription` -> `sources` -> `delta` (nhiều lần) -> `[DONE]`.
     """
-    content, filename = _read_and_validate_audio(file)
-    try:
-        stt_result = stt.transcribe_speech(content, filename=filename)
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("Lỗi xử lý STT trong /ask/voice/stream")
-        raise HTTPException(status_code=500, detail=f"Lỗi nhận diện giọng nói: {str(e)}")
-
+    stt_result = _transcribe(file)
     question = (stt_result.get("text") or "").strip()
     if not stt_result.get("is_speech") or not question:
         raise HTTPException(
@@ -572,7 +557,6 @@ def ask_voice_stream(
 
     find_kwargs: Dict[str, Any] = {
         "top_k": top_k,
-        "mode": mode,
         "kho": kho,
         "reference_date": reference_date,
     }
@@ -673,7 +657,6 @@ async def call_greeting():
 async def call_turn(
     file: UploadFile = File(...),
     top_k: int = Form(cfg.TOP_K_RERANK),
-    mode: Literal["dense", "hybrid", "hybrid_rerank"] = Form(cfg.RAG_MODE),
     kho: Optional[str] = Form(None),
     reference_date: Optional[date] = Form(None),
     khoa: Optional[int] = Form(None),
@@ -696,7 +679,7 @@ async def call_turn(
         raise HTTPException(status_code=500, detail=f"Lỗi nhận diện giọng nói: {str(e)}")
 
     question = (stt_result.get("text") or "").strip()
-    if cfg.GUARD_ENABLED and question:
+    if question:
         question = guard.normalize_question(question)
 
     # Nếu người dùng im lặng hoặc chỉ có tạp âm: trả 204 để FE tự động mở mic nghe tiếp
@@ -712,7 +695,6 @@ async def call_turn(
 
     find_kwargs: Dict[str, Any] = {
         "top_k": top_k,
-        "mode": mode,
         "kho": kho,
         "reference_date": reference_date,
     }

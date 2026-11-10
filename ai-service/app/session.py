@@ -112,7 +112,7 @@ class Session:
 
 class SessionStore:
     def __init__(self, db_uri=None):
-        # Nap LlamaIndex luc dung (khong luc import module): khi SESSION_ENABLED=false service khong ton gi
+        # Nap LlamaIndex luc dung (khong luc import module): dung chung mot lan cho ca tien trinh
         from llama_index.core.base.llms.types import ChatMessage
         from llama_index.core.memory import Memory
         from llama_index.core.storage.chat_store.sql import SQLAlchemyChatStore

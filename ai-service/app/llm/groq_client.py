@@ -9,6 +9,7 @@ import time
 from collections import deque
 
 import groq
+import httpx
 
 from .. import config as cfg
 
@@ -101,12 +102,29 @@ _limiter = None
 _singleton_lock = threading.Lock()
 
 
+def _timeout(seconds):
+    """`seconds` cho doc / ghi / cho ket noi trong pool; rieng buoc thiet lap ket noi bi cat o GROQ_CONNECT_TIMEOUT (xem config)."""
+    return httpx.Timeout(seconds, connect=cfg.GROQ_CONNECT_TIMEOUT)
+
+
 def get_client():
     global _client
     with _singleton_lock:
         if _client is None:
             # max_retries=0: viec thu lai do chat() quan ly (backoff + rate limiter), SDK khong tu thu lai.
-            _client = groq.Groq(api_key=cfg.GROQ_API_KEY, max_retries=0, timeout=cfg.GROQ_TIMEOUT)
+            # transport retries: chi thu lai luc THIET LAP ket noi (ConnectError / ConnectTimeout), khong gui lai request da gui.
+            # limits: 100 / 20 la mac dinh cua SDK (khi co `transport` rieng thi `limits` cua client bi bo qua); chi keepalive_expiry doi.
+            _client = groq.Groq(
+                api_key=cfg.GROQ_API_KEY,
+                max_retries=0,
+                timeout=_timeout(cfg.GROQ_TIMEOUT),
+                http_client=groq.DefaultHttpxClient(
+                    transport=httpx.HTTPTransport(
+                        retries=cfg.GROQ_CONNECT_RETRIES,
+                        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=cfg.GROQ_KEEPALIVE_S),
+                    )
+                ),
+            )
         return _client
 
 
@@ -145,21 +163,23 @@ def _retry_error(last_error, retries=None):
     return GroqError(f"Groq loi {kind} sau {retries + 1} lan thu, hay thu lai sau: {last_error}")
 
 
-def chat(messages, client=None, limiter=None, sleep=time.sleep, retries=None):
+def chat(messages, client=None, limiter=None, sleep=time.sleep, retries=None, timeout=None):
     """Gui `messages` toi model Qwen (GROQ_QWEN_MODEL), tra ve noi dung tra loi. Co cache dia + retry.
-    `retries` (mac dinh GROQ_MAX_RETRIES): so lan thu lai; buoc phu nhu viet lai cau hoi dat 0 de loi thi bo qua ngay, khong cho backoff."""
+    `retries` (mac dinh GROQ_MAX_RETRIES): so lan thu lai; buoc phu nhu viet lai cau hoi dat 0 de loi thi bo qua ngay, khong cho backoff.
+    `timeout` (giay; mac dinh GROQ_TIMEOUT cua client): gioi han doc / ghi rieng cho moi request cua lan goi nay; buoc ket noi van o GROQ_CONNECT_TIMEOUT."""
     model = _check_config(client)
     retries = cfg.GROQ_MAX_RETRIES if retries is None else retries
 
     key = cache_key(model, messages)
-    if cfg.GROQ_CACHE_ENABLED:
-        cached = _cache_get(key)
-        if cached is not None:
-            return cached
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
 
     client = client or get_client()
     limiter = limiter or get_limiter()
     params = _params(model, messages)
+    if timeout is not None:
+        params["timeout"] = _timeout(timeout)
 
     estimate = estimate_tokens(messages, cfg.GROQ_MAX_TOKENS)
     last_error = None
@@ -177,7 +197,7 @@ def chat(messages, client=None, limiter=None, sleep=time.sleep, retries=None):
             limiter.settle(entry, getattr(usage, "total_tokens", None) or estimate)
             text = resp.choices[0].message.content or ""
             text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
-            if cfg.GROQ_CACHE_ENABLED and text:
+            if text:
                 _cache_put(key, model, text)
             return text
         if attempt < retries:
@@ -235,11 +255,10 @@ def chat_stream(messages, client=None, limiter=None, sleep=time.sleep):
 
 def _stream(model, messages, client, limiter, sleep):
     key = cache_key(model, messages)
-    if cfg.GROQ_CACHE_ENABLED:
-        cached = _cache_get(key)
-        if cached is not None:
-            yield cached
-            return
+    cached = _cache_get(key)
+    if cached is not None:
+        yield cached
+        return
 
     client = client or get_client()
     limiter = limiter or get_limiter()
@@ -277,7 +296,7 @@ def _stream(model, messages, client, limiter, sleep):
         else:
             limiter.settle(entry, total_tokens or estimate)
             text = "".join(parts).strip()
-            if cfg.GROQ_CACHE_ENABLED and text:
+            if text:
                 _cache_put(key, model, text)
             return
         finally:

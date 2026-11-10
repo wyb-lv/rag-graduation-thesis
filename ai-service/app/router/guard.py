@@ -1,7 +1,6 @@
 """Lop bao ve con lai sau khi bo moi luat tu khoa: chuan hoa cau hoi, vo hieu hoa the phan cach trong du lieu, system prompt co rao +
 canary, kiem tra dau ra. Khong co danh sach tu khoa nao phan loai cau hoi hay doan trich: viec nhan ra tan cong / chao hoi /
-ngoai pham vi la cua router LLM (router_llm.py). GUARD_ENABLED=false thi cac ham o day la no-op; GUARD_MODE=log_only thi chi ghi
-log (khong chan dau ra).
+ngoai pham vi la cua router LLM (router_llm.py).
 """
 import hashlib
 import logging
@@ -138,10 +137,10 @@ def check_output(text):
 
 def vet_answer(text):
     """True neu duoc tra cho nguoi dung (khong bi guard dau ra chan)."""
-    if not cfg.GUARD_ENABLED or check_output(text):
-        return True
-    log.warning("guard output blocked mode=%s", cfg.GUARD_MODE)
-    return cfg.GUARD_MODE != "enforce"
+    ok = check_output(text)
+    if not ok:
+        log.warning("guard output blocked")
+    return ok
 
 
 class OutputBlocked(RuntimeError):
@@ -150,17 +149,11 @@ class OutputBlocked(RuntimeError):
 
 def vet_stream(chunks):
     """Boc generator cac delta: kiem tra tren cua so truot (tail + delta moi) truoc khi gui delta di."""
-    return _vet_stream(chunks) if cfg.GUARD_ENABLED else chunks
-
-
-def _vet_stream(chunks):
-    tail, flagged = "", False
+    tail = ""
     for text in chunks:
         window = tail + text
-        if not flagged and not check_output(window):
-            log.warning("guard output blocked mode=%s", cfg.GUARD_MODE)
-            if cfg.GUARD_MODE == "enforce":
-                raise OutputBlocked()
-            flagged = True  # log_only: ghi mot lan roi cho di tiep
+        if not check_output(window):
+            log.warning("guard output blocked")
+            raise OutputBlocked()
         tail = window[-_TAIL:]
         yield text
