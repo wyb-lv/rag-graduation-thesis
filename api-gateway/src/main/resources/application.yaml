@@ -9,6 +9,8 @@ spring:
       server:
         webmvc:
           routes:
+          # Phân quyền: ADMIN dùng mọi route; role khác (USER) chỉ hỏi đáp AI và /api/accounts/me/** (JwtAuthFilter + RoleAccessPolicy).
+          # Thêm route mới cho USER thì phải thêm vào RoleAccessPolicy, mặc định bị từ chối.
           # ── Auth Service: xác thực & người dùng ─────────────────────────
           - id: auth-service
             uri: ${AUTH_SERVICE_URL:http://localhost:8081}
