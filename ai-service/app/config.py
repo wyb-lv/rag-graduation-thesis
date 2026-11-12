@@ -236,8 +236,11 @@ OCR_VL_TIMEOUT_S = _env("OCR_VL_TIMEOUT_S", 1800.0, float)  # toi da cho MOT lo 
 OCR_PAGES_PER_REQUEST = _env("OCR_PAGES_PER_REQUEST", 8, int)  # so trang scan gui trong mot request (giu request / thoi gian cho vua phai)
 OCR_SCAN_IMAGE_COVER = _env("OCR_SCAN_IMAGE_COVER", 0.5, float)  # trang co anh phu tu ti le nay tro len coi la scan, bo qua lop chu
 # Nhan khoi layout khong dua vao Markdown (so trang, dau / chan trang lap lai o moi trang); mac dinh cua PaddleOCR-VL bo them `footnote`
-OCR_IGNORE_LABELS = _env("OCR_IGNORE_LABELS", ["number", "header", "header_image", "footer", "footer_image", "aside_text"],
+# `number` KHONG nam trong danh sach nay: layout gan nhan do cho ca gia tri that ("Tong so tin chi tich luy: 120"), loc theo nhan la mat so.
+# paddle_vl chi bo so trang that: khoi `number` nam trong OCR_PAGE_NUMBER_MARGIN (ti le chieu cao) o dau / cuoi trang va khong chung hang voi khoi nao khac.
+OCR_IGNORE_LABELS = _env("OCR_IGNORE_LABELS", ["header", "header_image", "footer", "footer_image", "aside_text"],
                           lambda raw: [x.strip() for x in raw.split(",") if x.strip()])
+OCR_PAGE_NUMBER_MARGIN = _env("OCR_PAGE_NUMBER_MARGIN", 0.1, float)
 
 CALL_GREETING_TEXT = _env(
     "CALL_GREETING_TEXT",
