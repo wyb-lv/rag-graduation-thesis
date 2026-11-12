@@ -34,7 +34,8 @@ Cau hinh tap trung o `config.py`. Bon bien cu doc tu moi truong (`.env` cua ai-s
 | `OCR_VL_TIMEOUT_S` | `1800` | Cho toi da cho MOT lo trang scan |
 | `OCR_PAGES_PER_REQUEST` | `8` | So trang scan gui trong mot request sang PaddleOCR-VL |
 | `OCR_SCAN_IMAGE_COVER` | `0.5` | Trang PDF co anh phu tu ti le nay tro len (hoac khong co chu hien thi) coi la scan; con lai doc thang lop chu |
-| `OCR_IGNORE_LABELS` | `number,header,header_image,footer,footer_image,aside_text` | Nhan khoi layout khong dua vao van ban (so trang, dau / chan trang) |
+| `OCR_IGNORE_LABELS` | `header,header_image,footer,footer_image,aside_text` | Nhan khoi layout khong dua vao van ban (dau / chan trang). `number` khong nam o day vi layout gan nhan do cho ca gia tri that (vd "Tong so tin chi tich luy: 120") |
+| `OCR_PAGE_NUMBER_MARGIN` | `0.1` | So trang = khoi `number` nam trong ty le chieu cao nay o dau / cuoi trang va khong chung hang voi khoi nao khac; chi khoi nay bi bo |
 | `TOP_K_RETRIEVAL` / `TOP_K_RERANK` | `20` / `5` | So ung vien lay tu Qdrant / so doan dua vao LLM |
 | `QDRANT_URL` / `QDRANT_COLLECTION` | `http://localhost:6333` / `quy_dinh_hybrid_v2` | Collection `quy_dinh_hybrid` cu khong con dung: can embed lai tai lieu vao v2 (script chep da xoa, con trong git history) |
 | `EMBED_DEVICE` / `RERANK_DEVICE` | tu chon | `cuda:0` hoac `cpu`. Dat `RERANK_DEVICE=cpu` de nhuong ~1.1GB VRAM |

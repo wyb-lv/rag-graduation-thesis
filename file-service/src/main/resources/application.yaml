@@ -64,6 +64,11 @@ minio:
   secret-key: file_service_secret
   bucket: documents
 
+internal:
+  # Token chung cho /internal/** (ai-service gửi trong header X-Internal-Token). Trong container: biến môi trường INTERNAL_TOKEN.
+  # Để trống = từ chối mọi request tới /internal/**.
+  token: ${INTERNAL_TOKEN:}
+
 ocr:
   # OCR do ai-service làm (lấy job từ hàng đợi, tải file qua GET /api/documents/download/{id}, báo kết quả về PUT /internal/documents/{id}/ocr).
   publish-confirm-timeout: 5s

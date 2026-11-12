@@ -71,7 +71,7 @@ Re-run OCR for one document: `POST /api/documents/{id}/ocr`. Re-embed without OC
 ```bash
 # 1. Shared environment
 cp .env.example .env
-#    Edit .env: set JWT_SECRET (>= 32 chars, e.g. `openssl rand -hex 32`) and the passwords.
+#    Edit .env: set JWT_SECRET and INTERNAL_TOKEN (each >= 32 chars, e.g. `openssl rand -hex 32`) and the passwords.
 
 # 2. ai-service API keys (docker-compose reads this file; it is not committed)
 cat > ai-service/.env <<'EOF'
@@ -138,6 +138,7 @@ ai-service tests (no outbound network): `cd ai-service && pytest -m "not integra
 | Variable | Meaning |
 |---|---|
 | `JWT_SECRET` | **Required.** JWT signing key (>= 32 chars) |
+| `INTERNAL_TOKEN` | **Required.** Shared secret for file-service `/internal/**`; ai-service sends it as `X-Internal-Token` |
 | `ACCOUNT_SEED_ENABLED` | Create the sample accounts at startup |
 | `GATEWAY_PORT`, `CORS_ORIGINS`, `AI_RPS`, `FILE_RPS`, `AUTH_RPS` | Gateway port, allowed frontend origins, requests-per-second limits |
 | `POSTGRES_*`, `AUTH_DB_*`, `ACCOUNT_DB_*`, `RABBITMQ_*`, `MINIO_*`, `MONGO_*` | Infrastructure credentials |
@@ -154,6 +155,8 @@ The ai-service documents are written in Vietnamese.
 
 ## Notes
 
+- file-service has no user authentication of its own (JWT is checked by the gateway), so it must only be reachable through the gateway. Its port 8080 is bound to `127.0.0.1` in `docker-compose.yml`; do not publish it on other interfaces.
+- `/internal/**` on file-service (the OCR result callback from ai-service) requires the `X-Internal-Token` header to match `INTERNAL_TOKEN`; with no token configured it rejects every request. The gateway does not route `/internal/**` either.
 - CORS is handled by the gateway; ai-service must not add `CORSMiddleware`.
 - Before a real deployment, change `JWT_SECRET` and the infrastructure passwords and turn off `ACCOUNT_SEED_ENABLED`.
 - After changing the OCR code you must re-run OCR **and** embedding for a document before Qdrant reflects the change.

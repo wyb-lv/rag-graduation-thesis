@@ -15,6 +15,7 @@ from functools import partial
 
 import httpx
 
+from .. import config as cfg
 from ..ingest.embed_consumer import FILE_SERVICE_URL, RABBITMQ_URL
 from . import extract, paddle_vl
 
@@ -27,7 +28,7 @@ DOWNLOAD_TIMEOUT = httpx.Timeout(600.0, connect=10.0)
 
 
 def _report(document_id, status, text=None, error=None):
-    resp = httpx.put(f"{FILE_SERVICE_URL}/internal/documents/{document_id}/ocr",
+    resp = httpx.put(f"{FILE_SERVICE_URL}/internal/documents/{document_id}/ocr", headers={"X-Internal-Token": cfg.INTERNAL_TOKEN},
                      json={"status": status, "text": text, "error": error}, timeout=60)
     return resp.status_code
 
