@@ -22,13 +22,12 @@ def _env(name, default, cast=str):
 
 # ---- Model (tai mot lan moi tien trinh, xem encoders.py) ----
 EMBED_MODEL = "BAAI/bge-m3"
-# Reranker listwise nap qua transformers bang models/jina_reranker_modeling.py (ban sao da duyet, khong trust_remote_code).
-# Giay phep CC BY-NC 4.0 (phi thuong mai).
-RERANK_MODEL = "jinaai/jina-reranker-v3.5"
-# Weights/config/tokenizer lay dung revision nay, va models/jina_reranker_modeling.py la ban sao modeling.py o revision nay.
-# Doi revision = duyet lai modeling.py moi va vendor lai.
-RERANK_REVISION = "e8a93f33f0b22108f8c2364f8484ce3422552fbc"
-RERANK_DTYPE = "bfloat16"  # dtype goc cua checkpoint; tren CPU luon dung float32
+# Reranker CrossEncoder (sentence-transformers): mmBERT-base (ModernBERT, 308M) chung cat tu Qwen3-Reranker-4B, da ngon ngu
+# (co tieng Viet), giay phep Apache-2.0. Huan luyen o 384 token/cap, model card van dung max_length 512.
+RERANK_MODEL = "Horizon-Labs/multilingual-reranker-base"
+# Weights/config/tokenizer lay dung revision nay (de trong = ban moi nhat cua nhanh main; repo nay con dang duoc cap nhat).
+RERANK_REVISION = "7330f6d0b3f560af0c2b9a63820ea299a45fd91b"
+RERANK_DTYPE = "float16"  # tren CPU luon dung float32
 USE_FP16 = True  # chi cho BGE-M3
 # Thiet bi: "cuda:0", "cpu"... None = tu chon (cuda:0 neu co GPU, khong thi cpu).
 EMBED_DEVICE = None
@@ -38,10 +37,9 @@ RERANK_DEVICE = None
 RERANK_CPU_ON_OOM = False
 EMBED_BATCH_SIZE = 16
 EMBED_MAX_LENGTH = 512
-# Reranker listwise: cau hoi + ca danh sach doan vao MOT prompt (Jina: toi da 64 doan) nen "batch" la so doan cham
-# chung. Nhieu hon (hoac khi OOM) thi chia nhom; diem giua cac nhom khong cung ngu canh nen chi so sanh gan dung.
-RERANK_BATCH_SIZE = 64
-RERANK_MAX_LENGTH = 512  # token toi da moi doan (cat bot), de vua VRAM 4GB
+# So cap (cau hoi, doan) cham trong mot luot chay model; khi OOM thi chia doi. Moi cap cham doc lap nen batch khong doi diem.
+RERANK_BATCH_SIZE = 16
+RERANK_MAX_LENGTH = 512  # token toi da cua ca cap (cau hoi + doan), phan thua bi cat; de vua VRAM 4GB
 
 # Model luon duoc nap + chay thu 1 lan ngay khi server khoi dong (thread nen), de cau hoi dau tien khong phai cho ~16s.
 # request /ask den luc dang warm-up doi toi da chung nay roi moi chay tiep (warm-up ket thuc som hon thi di ngay). Phai du cho lan tai model dau tien
@@ -53,12 +51,12 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 # dense (BGE-M3) + bm25. Collection `quy_dinh_hybrid` cu khong bi dong toi: chep sang day bang
 # `python -m scripts.migrate_add_bm25` (khong can GPU, dense chep nguyen, bm25 tinh tu payload `text`).
 QDRANT_COLLECTION = "quy_dinh_hybrid_v2"
-# Collection dense-only cu: chi doc cau hinh HNSW tu day, khong bao gio ghi/xoa.
+# Collection dense-only cu: app khong con doc hay ghi; chi tests/test_qdrant_hybrid.py kiem tra no khong bi dong toi.
 QDRANT_LEGACY_COLLECTION = "paragraphs"
 DENSE_VECTOR_NAME = "dense"
 BM25_VECTOR_NAME = "bm25"
 EMBED_DIM = 1024
-# Chi dung khi khong doc duoc collection cu: cung cau hinh da benchmark truoc day.
+# Cau hinh HNSW cua collection moi (qdrant_setup.create_collection), da benchmark truoc day.
 HNSW_M = 32
 HNSW_EF_CONSTRUCT = 200
 HNSW_EF = 128  # efSearch: lon hon -> recall cao hon, cham hon
@@ -85,7 +83,7 @@ TOP_K_RERANK = 5  # so doan dua vao ngu canh LLM
 # Ten nhanh -> ten vector trong collection Qdrant
 HYBRID_LEG_VECTORS = {"dense": DENSE_VECTOR_NAME, "bm25": BM25_VECTOR_NAME}
 
-# Cac nhanh cua pipeline hybrid (luon roi rerank bang jina-reranker): moi nhanh cua moi cau (cau goc va cau viet lai) la mot danh sach,
+# Cac nhanh cua pipeline hybrid (luon roi rerank bang CrossEncoder): moi nhanh cua moi cau (cau goc va cau viet lai) la mot danh sach,
 # tat ca duoc hop nhat bang MOT lan RRF phia Qdrant (gop trung theo id).
 HYBRID_LEGS = ("dense", "bm25")
 
@@ -98,13 +96,13 @@ BM25_B = 0.75
 # do dai chunk / gia tri nay, nen doi o day thi phai nap lai bm25: scripts/migrate_add_bm25.py do lai kho va in gia tri moi.
 BM25_AVG_LEN = 370.13
 
-# Diem rerank (cosine cua jina, -1..1) toi thieu de doan van duoc coi la lien quan. Dat -1 de tat.
-# Do lai 2026-10 tren kho 1297 chunk / 77 van ban (10 cau trong pham vi, 9 cau lac de): cau hoi NGAN ("Hoc phi bao nhieu?")
-# bi reranker nen diem xuong, doan dung chi 0.01-0.06 nen nguong 0.1 cat con 0-1 doan va LLM tra "khong chua thong tin";
-# them ten truong vao cau hoi chi la doc them chu (diem len, nhung xep hang lai ve doan chung chung, va cau lac de cung vuot
-# nguong) nen KHONG la cach sua. Cau lac de cao nhat -0.032, doan tot nhat cua cau trong pham vi >= 0.2 -> 0.0 giu du doan
-# ma van chan cau lac de. Doi model/corpus thi do lai (scripts/calibrate_rerank.py).
-RERANK_MIN_SCORE = 0.0
+# Diem rerank (sigmoid cua CrossEncoder, 0..1) toi thieu de doan van duoc coi la lien quan. Dat 0 de tat.
+# Do lai 2026-11-11 voi multilingual-reranker-base tren kho 1319 chunk (27 cau trong pham vi, 10 cau lac de): hai nhom tach duoc.
+# Doan tot nhat cua cau trong pham vi >= 0.327 (cau ngan "Hoc phi bao nhieu?" ~0.94); cau lac de cao nhat 0.296 ("Luong giang vien
+# truong Hoa Sen", gan chu de), con lai <= 0.142. Nguong 0.2 giu 27/27 cau dung va chan 9/10 cau lac de; 0.3 chan du 10/10 nhung chi
+# cach diem thap nhat cua cau dung 0.03 tren mot bo cau hoi nho. Tra "khong co thong tin" cho cau dung te hon de lot mot cau lac de
+# (router phia truoc va prompt tra loi van tu choi duoc). Doi model/corpus thi do lai (scripts/calibrate_rerank.py).
+RERANK_MIN_SCORE = 0.2
 
 # ---- Guard (guard.py): quet doan trich, prompt co rao + canary, guard dau ra; cau tra loi co dinh (small_talk.py) cho router ----
 GUARD_MAX_QUESTION_CHARS = 1000
@@ -239,12 +237,7 @@ OCR_SCAN_IMAGE_COVER = _env("OCR_SCAN_IMAGE_COVER", 0.5, float)  # trang co anh 
 OCR_IGNORE_LABELS = _env("OCR_IGNORE_LABELS", ["number", "header", "header_image", "footer", "footer_image", "aside_text"],
                           lambda raw: [x.strip() for x in raw.split(",") if x.strip()])
 
-# Thêm vào ngay dưới dòng MAX_AUDIO_BYTES trong ai-service/app/config.py:
 CALL_GREETING_TEXT = _env(
     "CALL_GREETING_TEXT",
     "Xin chào! Mình là trợ lý học vụ Đại học Hoa Sen. Bạn có câu hỏi nào cần giải đáp không?",
-)
-CALL_NO_SPEECH_TEXT = _env(
-    "CALL_NO_SPEECH_TEXT",
-    "Mình chưa nghe rõ câu hỏi, bạn vui lòng nói lại giúp mình nhé.",
 )

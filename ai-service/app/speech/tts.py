@@ -258,7 +258,6 @@ async def stream_speech_chunks(
     text: str,
     voice: str = cfg.TTS_VOICE,
     rate: str = cfg.TTS_RATE,
-    max_retries: int = 1,
 ) -> AsyncIterator[bytes]:
     """
     Stream âm thanh MP3 độ trễ thấp từ server:
@@ -308,17 +307,6 @@ async def stream_speech_chunks(
         if next_task is not None and not next_task.done():
             next_task.cancel()
 
-
-async def synthesize_speech_bytes(
-    text: str,
-    voice: str = cfg.TTS_VOICE,
-    rate: str = cfg.TTS_RATE,
-) -> bytes:
-    """Tổng hợp giọng nói Tiếng Việt và trả về toàn bộ buffer MP3 (dùng khi cần buffer đầy đủ hoặc test)."""
-    audio_chunks = bytearray()
-    async for data in stream_speech_chunks(text=text, voice=voice, rate=rate):
-        audio_chunks.extend(data)
-    return bytes(audio_chunks)
 
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?;:])\s+|\n+")
 async def stream_speech_from_text_iter(

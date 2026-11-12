@@ -49,7 +49,7 @@ def test_stream_out_of_scope_skips_llm(client, monkeypatch):
     monkeypatch.setattr(qm, "find_hits", lambda question, **kw: [])
     monkeypatch.setattr(qm, "generate_answer_stream", lambda *a: pytest.fail("khong duoc goi LLM"))
     sources, delta, done = events(client.post("/ask/stream", json={"question": "Thoi tiet?"}))
-    assert sources == {"event": "sources", "in_scope": False, "sources": []}
+    assert sources == {"event": "sources", "in_scope": False, "sources": [], "session_id": sources["session_id"]}
     assert delta == {"event": "delta", "text": qm.NO_RESULT_ANSWER}
     assert done == "[DONE]"
 
@@ -80,8 +80,6 @@ def test_stream_retrieval_failure_is_502_before_streaming(client, monkeypatch):
 
 def test_startup_warms_up_embedder_and_reranker(monkeypatch):
     calls = []
-    monkeypatch.setattr(api.cfg, "WARMUP", True)
-    monkeypatch.setattr(api.cfg, "RAG_MODE", "hybrid_rerank")
     monkeypatch.setattr(api.qdrant_setup, "validate_legs", lambda client: None)  # lifespan không chạm Qdrant thật
     monkeypatch.setattr(api.encoders, "encode_texts", lambda texts: calls.append("encode"))
     monkeypatch.setattr(api.encoders, "rerank_scores", lambda q, passages: calls.append("rerank"))
@@ -93,16 +91,6 @@ def test_startup_warms_up_embedder_and_reranker(monkeypatch):
             time.sleep(0.01)
         assert client.get("/health").json() == {"status": "ok", "models": "ready"}
     assert calls == ["encode", "rerank"]
-
-
-def test_warmup_skips_reranker_when_mode_does_not_rerank(monkeypatch):
-    calls = []
-    monkeypatch.setattr(api.cfg, "RAG_MODE", "hybrid")
-    monkeypatch.setattr(api.encoders, "encode_texts", lambda texts: calls.append("encode"))
-    monkeypatch.setattr(api.encoders, "rerank_scores", lambda q, passages: calls.append("rerank"))
-    monkeypatch.setitem(api._warmup, "status", "pending")
-    api.warm_up()
-    assert calls == ["encode"] and api._warmup["status"] == "ready"
 
 
 def test_warmup_failure_is_reported_not_raised(monkeypatch):

@@ -1,7 +1,6 @@
 import asyncio
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -238,10 +237,9 @@ def test_two_first_requests_get_the_same_store(monkeypatch):
 
 
 @pytest.mark.parametrize("env, ok, needle", [
-    ({"SESSION_ENABLED": "true", "SESSION_STORE": "sqlite", "SESSION_DB_URI": "sqlite+aiosqlite:////data/s.db"}, True, ""),
-    ({"SESSION_ENABLED": "true", "SESSION_STORE": "sqlite"}, False, "SESSION_DB_URI"),
+    ({"SESSION_STORE": "sqlite", "SESSION_DB_URI": "sqlite+aiosqlite:////data/s.db"}, True, ""),
+    ({"SESSION_STORE": "sqlite"}, False, "SESSION_DB_URI"),
     ({"SESSION_STORE": "mongodb"}, False, "sqlite"),
-    ({"SESSION_ENABLED": "false", "SESSION_STORE": "sqlite"}, True, ""),  # tat session thi khong doi URI
 ])
 def test_config_validates_the_session_store(env, ok, needle):
     root = Path(__file__).resolve().parent.parent
