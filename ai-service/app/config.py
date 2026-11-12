@@ -230,6 +230,8 @@ QUERY_REWRITE_TIMEOUT_S = _env("QUERY_REWRITE_TIMEOUT_S", 6.0, float)  # cau hoi
 # ---- OCR (app/ocr): consumer file-service.ocr.jobs. PDF co chu hien thi va DOCX doc thang (khong the sai chinh ta); chi trang scan / anh moi qua PaddleOCR-VL-1.6 ----
 # Pipeline `paddleocr[doc-parser]` (PP-DocLayoutV3 + VLM 0.9B) chay o container chinh thuc `paddleocr-vl-api` (docker-compose.yml)
 OCR_VL_URL = os.environ.get("OCR_VL_URL", "http://localhost:8080").rstrip("/")
+# Token chung voi file-service cho /internal/** (header X-Internal-Token): ai-service bao ket qua OCR bang no. Khong bao gio log.
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
 OCR_VL_TIMEOUT_S = _env("OCR_VL_TIMEOUT_S", 1800.0, float)  # toi da cho MOT lo trang; service doc cham theo so trang va GPU
 OCR_PAGES_PER_REQUEST = _env("OCR_PAGES_PER_REQUEST", 8, int)  # so trang scan gui trong mot request (giu request / thoi gian cho vua phai)
 OCR_SCAN_IMAGE_COVER = _env("OCR_SCAN_IMAGE_COVER", 0.5, float)  # trang co anh phu tu ti le nay tro len coi la scan, bo qua lop chu

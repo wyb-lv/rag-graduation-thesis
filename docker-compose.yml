@@ -192,8 +192,9 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_USER:-file_service}
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-file_service_secret}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?đặt INTERNAL_TOKEN trong .env}   # /internal/** (ai-service bao ket qua OCR); header X-Internal-Token
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"   # chi loopback: file-service khong co xac thuc, ben ngoai di qua api-gateway
 
   ai-service:
     build: ./ai-service
@@ -210,6 +211,7 @@ services:
     env_file: ./ai-service/.env   # GROQ_API_KEY, GROQ_QWEN_MODEL, ...
     environment:
       QDRANT_URL: http://qdrant:6333
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?đặt INTERNAL_TOKEN trong .env}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-file_service}:${RABBITMQ_PASSWORD:-secret}@rabbitmq:5672/
       FILE_SERVICE_URL: http://file-service:8080
       OCR_VL_URL: http://paddleocr-vl-api:8080   # OCR trang scan: PaddleOCR-VL-1.6 (hai service paddleocr-* bên dưới)
