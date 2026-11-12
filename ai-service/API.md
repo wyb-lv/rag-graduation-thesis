@@ -72,7 +72,7 @@ Base URL mac dinh: `http://localhost:8000`
 Luon chay hybrid roi rerank (khong con tham so `mode`; client cu van gui `mode` thi bi bo qua):
 
 1. Qdrant: prefetch cac nhanh trong `HYBRID_LEGS` (`dense` + `bm25`; moi nhanh 20), hop nhat RRF o phia Qdrant, lay 20 ung vien.
-2. `multilingual-reranker-base` cham lai va giu 5 doan (cham theo cau goc, ke ca khi co cau viet lai), bo doan co diem duoi `RERANK_MIN_SCORE`.
+2. `multilingual-reranker-base` cham lai va giu 5 doan (cham CA HAI cau, cau goc va cau viet lai, diem la trung binh; neu cham rieng cau goc thi tu long nhu "rot mon" chi duoc ~0.1 va bi loai het), bo doan co diem duoi `RERANK_MIN_SCORE`.
 
 Moi nhanh la mot `Prefetch` trong cung mot request toi Qdrant va **cung mang mot bo loc** (`kho`, hieu luc, `khoa`, `loai_van_ban`). Bo loc nam o tung nhanh tim vector nen Qdrant ap no ngay trong luc tim, khong loc sau khi da lay top-k. Nhanh `dense` la vector BGE-M3 (sentence-transformers, GPU); nhanh `bm25` la BM25 tu viet (`app/bm25.py`, CPU; token am tiet + bigram, Qdrant nhan IDF luc truy van). Cau viet lai them hai nhanh nua (cung bo loc) va tat ca cac danh sach vao MOT lan RRF; chunk nam trong nhieu danh sach chi xuat hien mot lan.
 

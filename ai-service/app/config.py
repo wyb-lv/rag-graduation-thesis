@@ -102,6 +102,8 @@ BM25_AVG_LEN = 370.13
 # truong Hoa Sen", gan chu de), con lai <= 0.142. Nguong 0.2 giu 27/27 cau dung va chan 9/10 cau lac de; 0.3 chan du 10/10 nhung chi
 # cach diem thap nhat cua cau dung 0.03 tren mot bo cau hoi nho. Tra "khong co thong tin" cho cau dung te hon de lot mot cau lac de
 # (router phia truoc va prompt tra loi van tu choi duoc). Doi model/corpus thi do lai (scripts/calibrate_rerank.py).
+# 2026-11-12: find_hits cham CA HAI cau (goc + viet lai), diem trung binh. Do lai 46 cau voi cau viet lai that: 27/27 trong pham vi, 9/10 lac de
+# (nhu cu), nhom tach tot hon (trong pham vi thap nhat 0.394, lac de cao nhat 0.334; chi cham cau goc: 0.327 / 0.283), nen giu 0.2.
 RERANK_MIN_SCORE = 0.2
 
 # ---- Guard (guard.py): quet doan trich, prompt co rao + canary, guard dau ra; cau tra loi co dinh (small_talk.py) cho router ----
