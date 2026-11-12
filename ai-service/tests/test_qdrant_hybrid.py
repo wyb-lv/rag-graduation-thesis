@@ -75,14 +75,18 @@ def make_collection(client, monkeypatch):
 def pt(i, dense, sparse=None, **payload):
     vector = {"dense": dense.tolist()}
     if sparse:
-        vector["sparse"] = models.SparseVector(indices=list(sparse), values=list(sparse.values()))
+        vector["bm25"] = models.SparseVector(indices=list(sparse), values=list(sparse.values()))
     return models.PointStruct(id=i, vector=vector, payload={"source": "quy_che.pdf", "text": f"doan {i}", **payload})
 
 
+def sparse_of(lexical):
+    return models.SparseVector(indices=[int(k) for k in lexical], values=list(lexical.values()))
+
+
 def stub_query(monkeypatch, dense, lexical):
-    monkeypatch.setattr(
-        encoders, "encode_texts", lambda texts, batch_size=None: (np.stack([dense]), [lexical])
-    )
+    monkeypatch.setattr(encoders, "encode_texts", lambda texts, batch_size=None: np.stack([dense]))
+    monkeypatch.setattr(qm.bm25, "bm25_query_vector", lambda text: sparse_of(lexical))
+    monkeypatch.setattr(qm.query_rewrite, "rewrite", lambda question: None)  # viet lai cau luon bat; file nay khong kiem tra no
 
 
 def test_new_collection_defines_both_legs_and_indexes_exist_before_first_upsert(client, make_collection):
@@ -95,8 +99,8 @@ def test_new_collection_defines_both_legs_and_indexes_exist_before_first_upsert(
     assert (dense.hnsw_config.m, dense.hnsw_config.ef_construct) == (cfg.HNSW_M, cfg.HNSW_EF_CONSTRUCT)
 
     sparse = info.config.params.sparse_vectors
-    assert set(sparse) == {"sparse"}
-    assert sparse["sparse"].modifier is None  # trong so hoc duoc cua BGE-M3: khong IDF
+    assert set(sparse) == {"bm25"}
+    assert sparse["bm25"].modifier == models.Modifier.IDF  # Qdrant nhan IDF luc truy van, bm25.py chi tao phan tf
 
     schema = info.payload_schema
     assert set(schema) == {"kho", "doi_tuong", "loai_van_ban", "hieu_luc_tu", "hieu_luc_den", "khoa_tu", "khoa_den"}
@@ -121,7 +125,7 @@ def test_hybrid_query_fuses_dense_and_sparse_with_rrf(client, make_collection, m
     ])
     stub_query(monkeypatch, unit((0, 1)), {"10": 1.0})
 
-    hybrid = qm.retrieve("q", mode="hybrid")
+    hybrid = qm.retrieve("q")
     # RRF: 3 = 1/62 + 1/62 > 2 = 1/61 + ~1/73 > 1 = 1/61 > cac diem dem; 4 khong co o sparse nen cuoi cung
     assert [h["id"] for h in hybrid[:3]] == [3, 2, 1]
     assert hybrid[-1]["id"] == 4
@@ -129,15 +133,11 @@ def test_hybrid_query_fuses_dense_and_sparse_with_rrf(client, make_collection, m
     scores = [h["retrieval_score"] for h in hybrid]
     assert scores == sorted(scores, reverse=True)
 
-    dense_only = qm.retrieve("q", mode="dense")  # dense chay duoc tren collection moi qua vector `dense`
-    assert [h["id"] for h in dense_only[:2]] == [1, 3]
-    assert dense_only[0]["retrieval_score"] == pytest.approx(1.0, abs=1e-3)  # cosine
-
 
 def test_empty_sparse_query_still_returns_dense_results(client, make_collection, monkeypatch):
     make_collection([pt(1, unit((0, 1)), {10: 1.0}), pt(2, unit((3, 1)), {11: 1.0})])
     stub_query(monkeypatch, unit((0, 1)), {})
-    assert qm.retrieve("q", mode="hybrid")[0]["id"] == 1
+    assert qm.retrieve("q")[0]["id"] == 1
 
 
 def test_payload_filters_on_kho_and_effective_date(client, make_collection, monkeypatch):
@@ -151,14 +151,13 @@ def test_payload_filters_on_kho_and_effective_date(client, make_collection, monk
     ])
     stub_query(monkeypatch, unit((0, 1)), {"10": 1.0})
 
-    def ids(mode, **kw):
-        return {h["id"] for h in qm.retrieve("q", mode=mode, **kw)}
+    def ids(**kw):
+        return {h["id"] for h in qm.retrieve("q", **kw)}
 
-    for mode in ("dense", "hybrid"):
-        assert ids(mode, reference_date=date(2025, 6, 1)) == {1, 4}
-        assert ids(mode, reference_date=date(2021, 6, 1)) == {1, 2, 4}
-        assert ids(mode, reference_date=date(2035, 1, 1), kho="KHOA_A") == {1, 3}
-        assert ids(mode, reference_date=date(2025, 6, 1), kho="KHOA_B") == set()
+    assert ids(reference_date=date(2025, 6, 1)) == {1, 4}
+    assert ids(reference_date=date(2021, 6, 1)) == {1, 2, 4}
+    assert ids(reference_date=date(2035, 1, 1), kho="KHOA_A") == {1, 3}
+    assert ids(reference_date=date(2025, 6, 1), kho="KHOA_B") == set()
 
 
 def test_no_candidates_after_filtering_answers_without_calling_groq(client, make_collection, monkeypatch):
@@ -169,7 +168,7 @@ def test_no_candidates_after_filtering_answers_without_calling_groq(client, make
         raise AssertionError("khong duoc goi Groq khi khong co ung vien")
 
     monkeypatch.setattr(qm.groq_client, "chat", boom)
-    answer, hits, in_scope = qm.ask("q", mode="hybrid_rerank", kho="KHOA_KHONG_TON_TAI")
+    answer, hits, in_scope = qm.ask("q", kho="KHOA_KHONG_TON_TAI")
     assert (answer, hits, in_scope) == (qm.NO_RESULT_ANSWER, [], False)
 
 
@@ -182,7 +181,7 @@ META = [
     (4, dict(loai_van_ban="thong_bao", kho="A", khoa_den=2019)),  # chỉ áp dụng khóa <= 2019
     (5, dict(loai_van_ban="bieu_mau")),  # không có kho / ngày / khóa
 ]
-LEG_SETS = [("dense",), ("sparse",), ("dense", "sparse")]
+LEG_SETS = [("dense",), ("bm25",), ("dense", "bm25")]
 
 
 @pytest.mark.parametrize("alt", [None, "cau viet lai"], ids=["mot_cau", "hai_cau"])
@@ -194,7 +193,7 @@ def test_every_leg_respects_kho_validity_khoa_and_loai_van_ban(make_collection, 
             id=i,
             vector={
                 "dense": unit((0, 1)).tolist(),
-                "sparse": models.SparseVector(indices=[10], values=[1.0]),
+                "bm25": models.SparseVector(indices=[10], values=[1.0]),
             },
             payload={"source": "quy_che.pdf", "text": text, **meta},
         )
@@ -204,7 +203,7 @@ def test_every_leg_respects_kho_validity_khoa_and_loai_van_ban(make_collection, 
     stub_query(monkeypatch, unit((0, 1)), {"10": 1.0})  # mọi nhánh đều khớp CẢ 5 điểm: filter rò sẽ lộ ra ngay
 
     def ids(**kw):
-        return {h["id"] for h in qm.retrieve("olympic", mode="hybrid", alt_question=alt, **kw)}
+        return {h["id"] for h in qm.retrieve("olympic", alt_question=alt, **kw)}
 
     ref = date(2025, 6, 1)
     assert ids(reference_date=ref) == {1, 4, 5}
@@ -221,14 +220,14 @@ def test_every_leg_respects_kho_validity_khoa_and_loai_van_ban(make_collection, 
 
 def test_validate_legs_against_real_collections(client, make_collection):
     full = make_collection()
-    qdrant_setup.validate_legs(client, full, ("dense", "sparse"))  # không ném lỗi
+    qdrant_setup.validate_legs(client, full, ("dense", "bm25"))  # không ném lỗi
 
     dense_only = f"test_hybrid_{uuid.uuid4().hex[:8]}"  # dạng collection cũ: chưa có sparse
     client.create_collection(dense_only, vectors_config={"dense": models.VectorParams(size=4, distance=models.Distance.COSINE)})
     try:
         qdrant_setup.validate_legs(client, dense_only, ("dense",))
-        with pytest.raises(RuntimeError, match="sparse") as err:
-            qdrant_setup.validate_legs(client, dense_only, ("dense", "sparse"))
+        with pytest.raises(RuntimeError, match="bm25") as err:
+            qdrant_setup.validate_legs(client, dense_only, ("dense", "bm25"))
         assert dense_only in str(err.value)
     finally:
         client.delete_collection(dense_only)
@@ -237,11 +236,9 @@ def test_validate_legs_against_real_collections(client, make_collection):
 # ---- hai cau truy van (cau goc + cau viet lai): dense + sparse cua ca hai, mot lan RRF, gop trung theo id ----
 
 def stub_by_sentence(monkeypatch, table):
-    """encode_texts tra vector theo noi dung cau: table = {cau: (dense, lexical)}."""
-    monkeypatch.setattr(
-        encoders, "encode_texts",
-        lambda texts, batch_size=None: (np.stack([table[t][0] for t in texts]), [table[t][1] for t in texts]),
-    )
+    """encode_texts (dense) va bm25_query_vector (lexical) tra vector theo noi dung cau: table = {cau: (dense, lexical)}."""
+    monkeypatch.setattr(encoders, "encode_texts", lambda texts, batch_size=None: np.stack([table[t][0] for t in texts]))
+    monkeypatch.setattr(qm.bm25, "bm25_query_vector", lambda text: sparse_of(table[text][1]))
 
 
 def two_sentence_points():
@@ -261,10 +258,10 @@ def test_second_sentence_reaches_a_chunk_the_first_cannot_and_a_chunk_in_several
     make_collection(two_sentence_points())
     stub_by_sentence(monkeypatch, TWO_SENTENCES)
 
-    alone = [h["id"] for h in qm.retrieve("q", mode="hybrid", top_k=3)]
+    alone = [h["id"] for h in qm.retrieve("q", top_k=3)]
     assert 2 not in alone  # diem 2 khong nam trong top 3 nhanh nao cua "q"
 
-    both = qm.retrieve("q", mode="hybrid", top_k=3, alt_question="alt")
+    both = qm.retrieve("q", top_k=3, alt_question="alt")
     ids = [h["id"] for h in both]
     # 1 chi den tu "q", 2 chi den tu "alt"; 3 nam trong 3 trong 4 danh sach nhung chi tra ve MOT lan (RRF gop trung theo id)
     assert sorted(ids) == [1, 2, 3]
@@ -275,6 +272,6 @@ def test_second_sentence_reaches_a_chunk_the_first_cannot_and_a_chunk_in_several
 def test_filter_applies_to_both_sentences_so_the_rewrite_cannot_bring_back_an_excluded_chunk(client, make_collection, monkeypatch):
     make_collection(two_sentence_points())
     stub_by_sentence(monkeypatch, TWO_SENTENCES)
-    ids = [h["id"] for h in qm.retrieve("q", mode="hybrid", top_k=3, alt_question="alt", kho="A")]
+    ids = [h["id"] for h in qm.retrieve("q", top_k=3, alt_question="alt", kho="A")]
     assert 2 not in ids and 3 in ids  # diem 2 (kho B) la ket qua tot nhat cua "alt" nhung bi filter kho chan
     assert len(ids) == 3  # van du top_k du diem tot nhat bi loai: loc TRUOC khi lay top-k, khong phai cat bot ket qua sau do

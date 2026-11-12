@@ -1,7 +1,7 @@
-"""Tra loi cau hoi bang RAG hybrid + rerank: loc metadata -> BGE-M3 (dense) + BM25 -> Qdrant RRF -> jina-reranker-v3.5 -> Groq Qwen.
+"""Tra loi cau hoi bang RAG hybrid + rerank: loc metadata -> BGE-M3 (dense) + BM25 -> Qdrant RRF -> CrossEncoder reranker -> Groq Qwen.
 Bo loc metadata (kho, hieu luc, khoa, loai_van_ban) gan vao TUNG lan tim vector nen Qdrant thu hep tai lieu truoc khi lay top-k.
 Cac nhanh trong HYBRID_LEGS (dense, bm25) lay moi nhanh `top_k_retrieval` ung vien, hop nhat RRF phia Qdrant, roi
-jina-reranker-v3.5 giu `top_k_rerank` doan tot nhat. Qwen viet lai cau hoi (query_rewrite.py), tim dense + bm25
+reranker giu `top_k_rerank` doan tot nhat. Qwen viet lai cau hoi (query_rewrite.py), tim dense + bm25
 cho ca hai cau, RRF mot lan tren moi danh sach (Qdrant gop trung theo id) roi moi rerank theo cau goc.
 Nap du lieu vao Qdrant qua POST /embed hoac RabbitMQ (ingest/embed_service.py); chay docker compose up -d truoc.
 """

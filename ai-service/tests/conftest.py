@@ -1,8 +1,10 @@
 import scipy.linalg  # noqa: F401  (must load BLAS before torch to avoid a Windows DLL/heap crash)
 import sklearn.metrics.pairwise  # noqa: F401
+import socket
+
 import pytest
 
-from app import config as cfg
+_LOCAL_HOSTS = {None, "", "localhost", "127.0.0.1", "::1"}
 
 
 def pytest_collection_modifyitems(config, items):
@@ -16,7 +18,17 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
-def feature_flags_off(monkeypatch):
-    """config.py goi load_dotenv(override=True) nen `.env` cua may dev co the bat cac co nay; test nao can thi tu bat lai."""
-    for flag in ("ROUTER_ENABLED", "SESSION_ENABLED", "QUERY_REWRITE_ENABLED"):
-        monkeypatch.setattr(cfg, flag, False)
+def no_external_network(request, monkeypatch):
+    """Router (Gemini), viet lai cau va tra loi (Groq) luon bat, nen test nao khong tu gia lap chung se goi mang that va tru han muc
+    moi ngay. Chan moi lan phan giai ten mien ngoai may (chi cho localhost: Qdrant, TestClient); router / viet lai loi thi cau hoi di
+    thang vao RAG nhu khi chung hong. Test `integration` va `live` duoc di mang vi chung can model that / Qdrant / Gemini."""
+    if request.node.get_closest_marker("live") or request.node.get_closest_marker("integration"):
+        return
+    real_getaddrinfo = socket.getaddrinfo
+
+    def guarded(host, *args, **kwargs):
+        if host not in _LOCAL_HOSTS:
+            raise socket.gaierror(f"test khong duoc goi mang that: {host}")
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded)

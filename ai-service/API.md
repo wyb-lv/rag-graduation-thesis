@@ -2,7 +2,7 @@
 
 API tra loi cau hoi dua tren tai lieu (RAG hybrid). Backend: FastAPI (`api.py`).
 
-Luong xu ly: cau hoi -> chuan hoa -> mo session: lich su + khoa/kho -> router Gemini tu suy luan y dinh: chao hoi / tan cong / ngoai pham vi / thieu thong tin tra loi co dinh va dung o day, con lai duoc viet lai thanh cau tim kiem doc lap -> BGE-M3 (`sentence-transformers`, chi dense; nhanh lexical la BM25 tu viet) -> Qdrant hybrid search (loc payload ngay trong tung nhanh tim vector; prefetch dense + bm25, hop nhat RRF; Qwen viet lai cau tim kiem, dense + bm25 tim cho ca hai cau va RRF mot lan tren moi danh sach) -> top 20 -> `jina-reranker-v3.5` (listwise, nap qua transformers) -> top 5 doan -> prompt co rao (doan trich + lich su + cau hoi goc) -> Groq Qwen -> guard dau ra -> luu luot vao session -> cau tra loi co trich dan. Khong con luat tu khoa nao phan loai cau hoi: router loi thi cau hoi di thang vao RAG. Moi buoc tren luon chay, khong co cong tac bat / tat nao.
+Luong xu ly: cau hoi -> chuan hoa -> mo session: lich su + khoa/kho -> router Gemini tu suy luan y dinh: chao hoi / tan cong / ngoai pham vi / thieu thong tin tra loi co dinh va dung o day, con lai duoc viet lai thanh cau tim kiem doc lap -> BGE-M3 (`sentence-transformers`, chi dense; nhanh lexical la BM25 tu viet) -> Qdrant hybrid search (loc payload ngay trong tung nhanh tim vector; prefetch dense + bm25, hop nhat RRF; Qwen viet lai cau tim kiem, dense + bm25 tim cho ca hai cau va RRF mot lan tren moi danh sach) -> top 20 -> `Horizon-Labs/multilingual-reranker-base` (CrossEncoder, sentence-transformers) -> top 5 doan -> prompt co rao (doan trich + lich su + cau hoi goc) -> Groq Qwen -> guard dau ra -> luu luot vao session -> cau tra loi co trich dan. Khong con luat tu khoa nao phan loai cau hoi: router loi thi cau hoi di thang vao RAG. Moi buoc tren luon chay, khong co cong tac bat / tat nao.
 
 ## Chay local
 
@@ -38,12 +38,12 @@ Cau hinh tap trung o `config.py`. Bon bien cu doc tu moi truong (`.env` cua ai-s
 | `TOP_K_RETRIEVAL` / `TOP_K_RERANK` | `20` / `5` | So ung vien lay tu Qdrant / so doan dua vao LLM |
 | `QDRANT_URL` / `QDRANT_COLLECTION` | `http://localhost:6333` / `quy_dinh_hybrid_v2` | Collection `quy_dinh_hybrid` cu khong con dung: can embed lai tai lieu vao v2 (script chep da xoa, con trong git history) |
 | `EMBED_DEVICE` / `RERANK_DEVICE` | tu chon | `cuda:0` hoac `cpu`. Dat `RERANK_DEVICE=cpu` de nhuong ~1.1GB VRAM |
-| `RERANK_MODEL` / `RERANK_REVISION` | `jinaai/jina-reranker-v3.5` / commit da ghim | Weights, config, tokenizer lay dung revision nay. Doi revision thi phai duyet va vendor lai `jina_reranker_modeling.py` |
-| `RERANK_DTYPE` | `bfloat16` | dtype tren GPU (tren CPU luon `float32`) |
+| `RERANK_MODEL` / `RERANK_REVISION` | `Horizon-Labs/multilingual-reranker-base` / commit da ghim | Reranker CrossEncoder (sentence-transformers); weights, config, tokenizer lay dung revision nay. `RERANK_MODEL` co the la thu muc local |
+| `RERANK_DTYPE` | `float16` | dtype tren GPU (tren CPU luon `float32`) |
 | `RERANK_CPU_ON_OOM` | `0` | CUDA OOM ngay ca khi cham 1 doan/lan thi chuyen reranker sang CPU |
 | `EMBED_BATCH_SIZE` / `EMBED_MAX_LENGTH` | `16` / `512` | Tu dong giam batch khi OOM |
-| `RERANK_BATCH_SIZE` / `RERANK_MAX_LENGTH` | `64` / `512` | So doan cham chung trong 1 prompt (chia doi khi OOM) / so token toi da moi doan |
-| `RERANK_MIN_SCORE` | `0.0` | Diem rerank (cosine, -1..1) toi thieu cua mot doan; `-1` de tat |
+| `RERANK_BATCH_SIZE` / `RERANK_MAX_LENGTH` | `16` / `512` | So cap (cau hoi, doan) cham mot luot (chia doi khi OOM) / so token toi da cua ca cap, phan thua bi cat |
+| `RERANK_MIN_SCORE` | `0.2` | Diem rerank (sigmoid, 0..1) toi thieu cua mot doan; `0` de tat |
 | `HNSW_EF` | `128` | efSearch cua nhanh dense |
 | `HYBRID_LEGS` | `dense,bm25` | Cac nhanh cua pipeline hybrid, lay tu `dense`, `bm25` (phan cach bang dau phay). Ten khac thi truy van bao `ValueError` |
 | `PAYLOAD_FIELD_LOAI_VAN_BAN` | `loai_van_ban` | Ten field payload dung de loc theo `loai_van_ban` |
@@ -71,7 +71,7 @@ Base URL mac dinh: `http://localhost:8000`
 Luon chay hybrid roi rerank (khong con tham so `mode`; client cu van gui `mode` thi bi bo qua):
 
 1. Qdrant: prefetch cac nhanh trong `HYBRID_LEGS` (`dense` + `bm25`; moi nhanh 20), hop nhat RRF o phia Qdrant, lay 20 ung vien.
-2. `jina-reranker-v3.5` cham lai va giu 5 doan (cham theo cau goc, ke ca khi co cau viet lai), bo doan co diem duoi `RERANK_MIN_SCORE`.
+2. `multilingual-reranker-base` cham lai va giu 5 doan (cham theo cau goc, ke ca khi co cau viet lai), bo doan co diem duoi `RERANK_MIN_SCORE`.
 
 Moi nhanh la mot `Prefetch` trong cung mot request toi Qdrant va **cung mang mot bo loc** (`kho`, hieu luc, `khoa`, `loai_van_ban`). Bo loc nam o tung nhanh tim vector nen Qdrant ap no ngay trong luc tim, khong loc sau khi da lay top-k. Nhanh `dense` la vector BGE-M3 (sentence-transformers, GPU); nhanh `bm25` la BM25 tu viet (`app/bm25.py`, CPU; token am tiet + bigram, Qdrant nhan IDF luc truy van). Cau viet lai them hai nhanh nua (cung bo loc) va tat ca cac danh sach vao MOT lan RRF; chunk nam trong nhieu danh sach chi xuat hien mot lan.
 
@@ -180,11 +180,11 @@ Prompt yeu cau chi tra loi tu cac doan duoc cung cap, trich dan ten van ban va D
 | `in_scope` | bool | `false` khi khong con doan nao sau loc payload / nguong tuong dong, hoac cau hoi / cau tra loi bi guard chan. `true` voi cau tra loi RAG va voi tra loi co dinh (chao hoi) |
 | `intent` | string | **Tuy chon, them moi**; client cu bo qua duoc. `rag` (di qua pipeline, ke ca khi `in_scope=false` vi khong co doan phu hop), `greeting`, `thanks`, `goodbye`, `capability` (hoi cong dung / ban la ai), `meta` (hoi ve model, prompt, cau hinh: tra loi co dinh, khong tiet lo), `blocked` (router danh dau tan cong / injection, hoac guard dau ra chan cau tra loi lo prompt / bi mat), `off_topic` (ngoai pham vi quy dinh cua truong; `in_scope=false`), `clarify` (thieu chu de / doi tuong / thoi diem, tra mot cau hoi lai co dinh; `in_scope=true`). Cac intent khac `rag` khong bao gio co `sources` |
 | `session_id` | string | UUID cua session (do client gui hoac server tao) |
-| `sources[].score` | float | Diem rerank (cosine cua reranker, -1..1) |
-| `sources[].rerank_score` | float | Diem cosine (-1..1) cua reranker (bang `score`), co the **am**; chi so sanh duoc giua cac doan cung mot lan hoi |
+| `sources[].score` | float | Diem rerank (sigmoid cua reranker, 0..1) |
+| `sources[].rerank_score` | float | Diem sigmoid (0..1) cua reranker (bang `score`); moi cap cham doc lap nen so sanh duoc giua cac lan hoi |
 | `sources[].payload` | object | Toan bo payload cua doan (dung de trich dan) |
 
-Nguong tuong dong: `RERANK_MIN_SCORE` (mac dinh `0.0`, moi doan duoi nguong bi bo, nen LLM co the nhan it hon 5 doan). Nguong `0.0` do lai tren kho hien tai (1297 chunk, 77 van ban): cau hoi ngan nhu "Hoc phi bao nhieu?" bi reranker cham diem thap (doan dung chi 0.01-0.06) nen nguong `0.1` cu cat con 0-1 doan va LLM tra "Cac doan trich duoc cung cap khong chua thong tin..."; cau lac de cao nhat -0.032 nen van bi chan. Cau "gan chu de" nhung khong co dap an van toi LLM va prompt se tu choi.
+Nguong tuong dong: `RERANK_MIN_SCORE` (mac dinh `0.2`, moi doan duoi nguong bi bo, nen LLM co the nhan it hon 5 doan). Do lai 2026-11-11 voi multilingual-reranker-base tren kho 1319 chunk (27 cau trong pham vi, 10 cau lac de): hai nhom tach duoc. Doan tot nhat cua cau trong pham vi >= 0.327 (cau ngan "Hoc phi bao nhieu?" ~0.94); cau lac de cao nhat 0.296 (cau gan chu de, vd hoi luong giang vien truong khac), con lai <= 0.142. Nguong `0.2` giu 27/27 cau dung va chan 9/10 cau lac de; `0.3` chan du 10/10 nhung chi cach diem thap nhat cua cau dung 0.03. Cau "gan chu de" nhung khong co dap an van toi LLM va prompt se tu choi. Doi model/kho thi do lai bang `scripts/calibrate_rerank.py`.
 
 **Loi**
 
@@ -314,9 +314,9 @@ curl -N -X POST http://localhost:8000/ask/stream \
 
 ## Ghi chu
 
-- BGE-M3 (~1.1GB VRAM) va reranker (~1.1GB) nap ngay khi server khoi dong (~15s tren RTX 3050; lan dau con tai model tu Hugging Face) roi nam trong bo nho cho cac request sau. Reranker cung duoc nap ngay khi khoi dong.
-- Windows: goi `http://localhost:8000` tu Python/curl co the cham them ~2s moi ket noi (thu IPv6 `::1` truoc, uvicorn chi nghe IPv4). Dung `http://127.0.0.1:8000` de tranh. Truong hop xau nhat (20 doan x 512 token) dinh khoang 3.3GB tren GPU 4GB; sat gioi han thi dat `RERANK_DEVICE=cpu` hoac `RERANK_CPU_ON_OOM=1`.
-- `jina-reranker-v3.5` dung giay phep **CC BY-NC 4.0** (chi phi thuong mai). Model duoc nap bang transformers qua `jina_reranker_modeling.py`: ban sao modeling.py cua model o revision da ghim (xem header file de biet nguon, giay phep, va dong duy nhat da sua), nen khong can `trust_remote_code` va khong chay code tai ve luc chay.
+- BGE-M3 (~1.1GB VRAM) va reranker (~0.6GB) nap ngay khi server khoi dong (~15s tren RTX 3050; lan dau con tai model tu Hugging Face) roi nam trong bo nho cho cac request sau. Reranker cung duoc nap ngay khi khoi dong.
+- Windows: goi `http://localhost:8000` tu Python/curl co the cham them ~2s moi ket noi (thu IPv6 `::1` truoc, uvicorn chi nghe IPv4). Dung `http://127.0.0.1:8000` de tranh. Reranker (fp16) dinh ~0.83GB khi cham 40 doan dai x 512 token, batch 16 (do 2026-11-11 tren RTX 3050 4GB), cong ~1.1GB cua BGE-M3; sat gioi han thi dat `RERANK_DEVICE=cpu` hoac `RERANK_CPU_ON_OOM=1`.
+- `Horizon-Labs/multilingual-reranker-base` (giay phep Apache-2.0) la model ModernBERT chuan (`ModernBertForSequenceClassification`, 1 nhan, 308M, mmBERT-base chung cat tu Qwen3-Reranker-4B, da ngon ngu gom tieng Viet) nen nap bang `sentence_transformers.CrossEncoder`, khong can `trust_remote_code` va khong chay code tai ve luc chay. Model huan luyen o 384 token/cap (`RERANK_MAX_LENGTH` dang la 512 nhu model card).
 - Groq bi gioi han client-side 30 RPM / 8K TPM, nen request co the cho; cau hoi lap lai tra ngay tu cache dia.
 - CORS dang mo cho moi origin (`*`) de FE goi truc tiep khi dev; can gioi han domain cu the khi deploy.
 - Chay test: `pytest` (can model that + Qdrant dang chay); chi unit test: `pytest -m "not integration"`.

@@ -60,8 +60,8 @@ Thứ tự trong một request:
    Nhánh nào không có token (câu hỏi toàn dấu câu) bị bỏ; không còn nhánh nào thì dùng dense.
 2. `retrieve()`: **một** request `query_points` tới Qdrant, mỗi nhánh là một `Prefetch` (limit `TOP_K_RETRIEVAL`=20); Qdrant hợp nhất các nhánh bằng **RRF** ở phía server và trả `TOP_K_RETRIEVAL` ứng viên (mỗi chunk chỉ ra một lần dù nằm trong nhiều danh sách). **Lọc metadata trước khi tìm vector**: cùng một filter (`kho`, văn bản còn hiệu lực tại `reference_date` mặc định hôm nay, `khoa` của sinh viên, `loai_van_ban` nếu có) được gắn vào từng Prefetch; Qdrant áp nó ngay trong lúc tìm (có payload index) chứ không lọc sau khi đã lấy top-k, và nhánh nào thiếu filter sẽ trả cả đoạn ngoài phạm vi. Chỉ còn một nhánh thì truy vấn thẳng nhánh đó (điểm là điểm của nhánh, không phải RRF). Mode `dense` luôn chỉ dùng dense, bỏ qua `HYBRID_LEGS`.
    **Viết lại câu hỏi** (luôn chạy): `find_hits` gọi [app/rag/query_rewrite.py](app/rag/query_rewrite.py) cho Qwen viết lại câu tìm kiếm (sau router thì là `standalone_query` của router). `retrieve(..., alt_question=...)` tìm `dense` + `bm25` cho **cả hai câu** (4 danh sách) rồi RRF **một lần** trên tất cả, trong **một** request `query_points` (các Prefetch nằm phẳng, không lồng nhau; filter gắn ở từng Prefetch như trên). Chunk nằm trong nhiều danh sách chỉ ra một lần (Qdrant gộp theo id; kho đo 2026-10 gồm 1311 chunk không có cặp nào trùng nội dung nên không cần dedup thêm). Danh sách hợp nhất vẫn `TOP_K_RETRIEVAL` ứng viên và rerank chấm theo câu gốc. Qwen lỗi / trả rỗng / trùng câu gốc → tìm một câu như cũ, không báo lỗi.
-3. `rerank()`: jina-reranker-v3.5 chấm lại các ứng viên, giữ `TOP_K_RERANK` (5) đoạn tốt nhất.
-4. `find_hits()` lọc theo ngưỡng: giữ đoạn có `rerank_score >= RERANK_MIN_SCORE` (0.0).
+3. `rerank()`: `Horizon-Labs/multilingual-reranker-base` (CrossEncoder, sentence-transformers) chấm lại từng cặp (câu hỏi, đoạn), giữ `TOP_K_RERANK` (5) đoạn tốt nhất.
+4. `find_hits()` lọc theo ngưỡng: giữ đoạn có `rerank_score >= RERANK_MIN_SCORE` (0.2, điểm sigmoid 0..1).
 5. Không còn đoạn nào → trả `in_scope=false`, `sources=[]`, câu cố định `NO_RESULT_ANSWER`, **không gọi LLM**.
 6. Còn đoạn → `build_messages()` ghép các đoạn thành context (`[Đoạn i] Tài liệu: ...`, đúng thứ tự rerank) và `groq_client` gọi Qwen với `SYSTEM_PROMPT` (trả lời tiếng Việt, mỗi ý kèm trích dẫn `[Tên văn bản, Điều X, Khoản Y]`, không bịa số Điều).
 
@@ -146,8 +146,7 @@ ai-service/
 │   ├── rag/
 │   │   └── query_model.py        # Pipeline RAG: filter, retrieve (RRF), rerank, prompt, ngưỡng
 │   ├── models/
-│   │   ├── encoders.py           # Singleton BGE-M3 + Jina reranker; lock suy luận; xử lý CUDA OOM
-│   │   └── jina_reranker_modeling.py  # Bản vendored của modeling Jina (khỏi trust_remote_code)
+│   │   └── encoders.py           # Singleton BGE-M3 (SentenceTransformer) + reranker (CrossEncoder); lock suy luận; xử lý CUDA OOM
 │   ├── llm/
 │   │   └── groq_client.py        # Groq client: rate limit RPM/TPM, backoff, cache đĩa, ThinkFilter
 │   ├── ocr/
@@ -188,7 +187,7 @@ ai-service/
 | `HYBRID_LEGS` | Các nhánh của pipeline hybrid, lấy từ `dense`, `bm25`, phân cách bằng dấu phẩy. Mặc định `dense,bm25`. Tên khác thì truy vấn báo `ValueError` |
 | `BM25_TOKENIZER` / `BM25_K1` / `BM25_B` / `BM25_AVG_LEN` | Hằng số trong `config.py` cho nhánh BM25 (`syllable_bigram`, 1,2, 0,75, 370,13 đo trên kho thật). `BM25_AVG_LEN` ghi vào trọng số lúc index nên đổi bất kỳ giá trị nào ở đây thì phải embed lại tài liệu; `BM25_AVG_LEN` là số token BM25 trung bình mỗi chunk trên kho thật (đo bằng `bm25.bm25_tokens`) |
 | `PAYLOAD_FIELD_LOAI_VAN_BAN` | Tên field payload cho `loai_van_ban` (mặc định `loai_van_ban`; chunker ghi sẵn field này) |
-| `RERANK_MIN_SCORE` | Ngưỡng liên quan của reranker, `0.0` (đo lại 2026-10 trên 1297 chunk: câu lạc đề cao nhất −0,032, đoạn tốt nhất của câu hợp lệ ≥ 0,2; `0.1` cũ cắt hết đoạn đúng của câu hỏi ngắn). Đổi model/corpus/nhánh truy vấn thì đo lại bằng `scripts/calibrate_rerank.py` |
+| `RERANK_MIN_SCORE` | Ngưỡng liên quan của reranker (sigmoid 0..1), `0.2`. Đo lại 2026-11-11 với multilingual-reranker-base trên 1319 chunk (27 câu trong phạm vi, 10 câu lạc đề): hai nhóm tách được. Đoạn tốt nhất của câu trong phạm vi ≥ 0,327 (câu ngắn "Học phí bao nhiêu?" ~0,94), câu lạc đề cao nhất 0,296 (câu gần chủ đề), còn lại ≤ 0,142. `0.2` giữ 27/27 câu đúng, chặn 9/10 câu lạc đề; `0.3` chặn đủ 10/10 nhưng chỉ cách điểm thấp nhất của câu đúng 0,03. Đổi model/corpus/nhánh truy vấn thì đo lại bằng `scripts/calibrate_rerank.py` |
 | `EMBED_DEVICE`, `RERANK_DEVICE`, `RERANK_CPU_ON_OOM` | Thiết bị; GPU nhỏ (4GB) có thể đẩy reranker sang CPU |
 | (warm-up) | Luôn nạp model ngay khi khởi động; `/health` báo `models: pending/ready/error` |
 | `GROQ_RPM`, `GROQ_TPM` | Giới hạn gọi LLM (cache trả lời theo `GROQ_CACHE_DIR` luôn bật) |
@@ -251,5 +250,4 @@ ai-service/
 - [STRUCTURE.md](STRUCTURE.md): nhắc `scripts/export_paragraphs.py`, `scripts/index_qdrant.py`, `data/docs/`, `docker-compose.yml` riêng của ai-service. Các file này **không còn**; việc lập chỉ mục giờ qua RabbitMQ/`/embed`.
 - Docstring ở đầu [app/api.py](app/api.py) ghi `uvicorn api:app`; lệnh đúng là `uvicorn app.api:app`. Mục "Chạy local" của [API.md](API.md) cũng còn nhắc `index_qdrant.py`, `uvicorn api:app` và CORS `*`.
 - Script `index_qdrant.py` (đã xóa cùng `PARAGRAPHS_PATH` và `pymupdf`) từng tạo collection bằng cách chép cấu hình HNSW từ collection cũ `paragraphs`; nó đã bị xóa, nơi tạo collection duy nhất hiện nay là `qdrant_setup.create_collection()` (dùng `HNSW_M`/`HNSW_EF_CONSTRUCT` trong config).
-- `test_reranker.py::test_vendored_modeling_is_the_pinned_upstream_plus_the_documented_change` còn lỗi vì file vendored không còn dòng header mà test tìm (có từ trước).
 - `.env` đang chứa API key Groq thật; nên đổi key và đảm bảo file này không bị commit.

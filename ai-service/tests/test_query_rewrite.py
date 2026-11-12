@@ -1,6 +1,3 @@
-import subprocess
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -40,7 +37,7 @@ def test_rewrite_returns_the_model_sentence_and_asks_without_retries(groq):
     groq.script.append("Sinh viên không đạt học phần phải học lại có mất học phí không?")
     assert query_rewrite.rewrite("rớt môn có mất tiền ko") == "Sinh viên không đạt học phần phải học lại có mất học phí không?"
     (messages, kw), = groq.calls
-    assert kw == {"retries": 0}  # buoc phu: loi thi bo qua ngay, khong cho backoff cua Groq
+    assert kw == {"retries": 0, "timeout": cfg.QUERY_REWRITE_TIMEOUT_S}  # buoc phu: loi thi bo qua ngay, khong cho backoff cua Groq
     assert messages[0]["content"] == query_rewrite.SYSTEM_PROMPT
     assert messages[1]["content"] == "<question>\nrớt môn có mất tiền ko\n</question>"
 
@@ -82,8 +79,8 @@ def test_rewrite_never_raises(groq, error):
 def pipeline(monkeypatch):
     seen = SimpleNamespace(retrieve=None, rerank_q=None, rewrite_calls=[])
 
-    def retrieve(question, mode, kho, reference_date, **kw):
-        seen.retrieve = (question, mode, kw)
+    def retrieve(question, kho=None, reference_date=None, **kw):
+        seen.retrieve = (question, kho, kw)
         return [HIT]
 
     def rerank(question, hits, top_k):
@@ -100,54 +97,27 @@ def pipeline(monkeypatch):
     return seen
 
 
-def test_rewrite_is_skipped_when_the_flag_is_off(pipeline):
-    assert cfg.QUERY_REWRITE_ENABLED is False  # tests/conftest.py ghim ve tat de test khong goi Groq that
-    qm.find_hits("cau hoi", mode="hybrid_rerank")
-    assert pipeline.rewrite_calls == [] and pipeline.retrieve[2]["alt_question"] is None
-
-
-@pytest.mark.parametrize("env, expected", [({}, True), ({"QUERY_REWRITE_ENABLED": "false"}, False), ({"QUERY_REWRITE_ENABLED": "true"}, True)])
-def test_rewrite_is_on_by_default_and_env_can_turn_it_off(env, expected):
-    root = Path(__file__).resolve().parent.parent
-    base = {k: v for k, v in __import__("os").environ.items() if not k.startswith("QUERY_REWRITE_")}
-    code = "import sys, dotenv; sys.path.insert(0, '.'); dotenv.load_dotenv = lambda *a, **k: False; import app.config as c; print(c.QUERY_REWRITE_ENABLED)"
-    done = subprocess.run([sys.executable, "-I", "-c", code], cwd=root, env={**base, **env}, capture_output=True, text=True)
-    assert done.returncode == 0, done.stderr
-    assert done.stdout.strip() == str(expected)  # .env cua may dev bi bo qua: chi xem mac dinh trong config.py
-
-
-@pytest.mark.parametrize("mode", ["hybrid", "hybrid_rerank"])
-def test_both_sentences_are_searched_when_enabled(pipeline, monkeypatch, mode):
-    monkeypatch.setattr(cfg, "QUERY_REWRITE_ENABLED", True)
-    qm.find_hits("cau hoi", mode=mode)
+def test_both_sentences_are_searched(pipeline):
+    qm.find_hits("cau hoi")
     assert pipeline.rewrite_calls == ["cau hoi"]
     assert pipeline.retrieve[0] == "cau hoi" and pipeline.retrieve[2]["alt_question"] == "cau viet lai"
 
 
 def test_rerank_scores_against_the_original_question_not_the_rewrite(pipeline, monkeypatch):
-    monkeypatch.setattr(cfg, "QUERY_REWRITE_ENABLED", True)
-    qm.find_hits("cau hoi goc", mode="hybrid_rerank")
+    qm.find_hits("cau hoi goc")
     assert pipeline.rerank_q == "cau hoi goc"
-
-
-def test_dense_mode_never_rewrites_because_it_filters_on_cosine(pipeline, monkeypatch):
-    monkeypatch.setattr(cfg, "QUERY_REWRITE_ENABLED", True)
-    qm.find_hits("cau hoi", mode="dense")
-    assert pipeline.rewrite_calls == [] and pipeline.retrieve[2]["alt_question"] is None
 
 
 def test_failed_rewrite_falls_back_to_a_single_sentence(pipeline, monkeypatch, groq):
     monkeypatch.setattr(query_rewrite, "rewrite", REAL_REWRITE)  # rewrite() that, Groq gia that bai
-    monkeypatch.setattr(cfg, "QUERY_REWRITE_ENABLED", True)
     groq.script.append(GroqError("429"))
-    assert qm.find_hits("cau hoi", mode="hybrid_rerank") == [HIT]
+    assert qm.find_hits("cau hoi") == [HIT]
     assert pipeline.retrieve[2]["alt_question"] is None
 
 
 def test_ask_uses_the_rewrite_through_find_hits(pipeline, monkeypatch):
-    monkeypatch.setattr(cfg, "QUERY_REWRITE_ENABLED", True)
     monkeypatch.setattr(qm, "generate_answer", lambda q, hits, history=None: "tra loi [s]")
-    answer, hits, in_scope = qm.ask("cau hoi", mode="hybrid_rerank", search_query="cau doc lap cua router")
+    answer, hits, in_scope = qm.ask("cau hoi", search_query="cau doc lap cua router")
     assert (answer, in_scope) == ("tra loi [s]", True)
     assert pipeline.rewrite_calls == ["cau doc lap cua router"]  # viet lai cau router da lam doc lap, khong phai cau tho
 
@@ -169,18 +139,22 @@ def stub(monkeypatch):
 
     def encode(texts, batch_size=None):
         state.encoded += texts
-        return np.ones((len(texts), 1024), "float32"), [state.lexical]
+        return np.ones((len(texts), 1024), "float32")
 
     monkeypatch.setattr(encoders, "encode_texts", encode)
+    monkeypatch.setattr(
+        qm.bm25, "bm25_query_vector",
+        lambda text: models.SparseVector(indices=[int(k) for k in state.lexical], values=list(state.lexical.values())),
+    )
     monkeypatch.setattr(qm, "get_qdrant", lambda: state.qdrant)
     return state
 
 
 def test_two_sentences_become_one_flat_rrf_over_dense_and_sparse_of_both(stub):
-    qm.retrieve("cau goc", mode="hybrid", alt_question="cau viet lai")
+    qm.retrieve("cau goc", alt_question="cau viet lai")
     flt, ef = qm.build_filter(), models.SearchParams(hnsw_ef=cfg.HNSW_EF)
     dense = models.Prefetch(query=[1.0] * 1024, using="dense", filter=flt, limit=20, params=ef)
-    sparse = models.Prefetch(query=models.SparseVector(indices=[10, 20], values=[0.5, 0.25]), using="sparse", filter=flt, limit=20)
+    sparse = models.Prefetch(query=models.SparseVector(indices=[10, 20], values=[0.5, 0.25]), using="bm25", filter=flt, limit=20)
     [(collection, kwargs)] = stub.qdrant.calls
     assert collection == cfg.QDRANT_COLLECTION
     # bon danh sach (dense, sparse cua cau goc; dense, sparse cua cau viet lai) vao MOT lan RRF, khong long nhau
@@ -191,7 +165,7 @@ def test_two_sentences_become_one_flat_rrf_over_dense_and_sparse_of_both(stub):
 
 
 def test_the_same_metadata_filter_reaches_every_search_of_both_sentences(stub):
-    qm.retrieve("a", mode="hybrid", alt_question="b", kho="K", khoa=2024, loai_van_ban=["thong_bao"])
+    qm.retrieve("a", alt_question="b", kho="K", khoa=2024, loai_van_ban=["thong_bao"])
     flt = qm.build_filter("K", None, 2024, ["thong_bao"])
     [(_, kwargs)] = stub.qdrant.calls
     assert len(kwargs["prefetch"]) == 4 and all(p.filter == flt for p in kwargs["prefetch"])  # loc truoc khi tim vector
@@ -200,21 +174,14 @@ def test_the_same_metadata_filter_reaches_every_search_of_both_sentences(stub):
 
 @pytest.mark.parametrize("alt", [None, "", "cau goc"])
 def test_no_distinct_second_sentence_sends_the_single_sentence_request(stub, alt):
-    qm.retrieve("cau goc", mode="hybrid", alt_question=alt)
+    qm.retrieve("cau goc", alt_question=alt)
     [(_, kwargs)] = stub.qdrant.calls
-    assert [p.using for p in kwargs["prefetch"]] == ["dense", "sparse"]  # chi mot cau: hai nhanh nhu truoc khi co viet lai
+    assert [p.using for p in kwargs["prefetch"]] == ["dense", "bm25"]  # chi mot cau: hai nhanh nhu truoc khi co viet lai
     assert stub.encoded == ["cau goc"]
-
-
-def test_dense_mode_with_two_sentences_fuses_the_two_dense_lists(stub):
-    qm.retrieve("a", mode="dense", alt_question="b")  # dense: moi cau chi con mot nhanh
-    [(_, kwargs)] = stub.qdrant.calls
-    assert [p.using for p in kwargs["prefetch"]] == ["dense", "dense"]
-    assert kwargs["query"] == models.FusionQuery(fusion=models.Fusion.RRF)
 
 
 def test_a_sentence_without_sparse_tokens_still_contributes_its_dense_list(stub):
     stub.lexical = {}  # khong co token sparse nao: ca hai cau chi con nhanh dense
-    qm.retrieve("a", mode="hybrid", alt_question="b")
+    qm.retrieve("a", alt_question="b")
     [(_, kwargs)] = stub.qdrant.calls
     assert [p.using for p in kwargs["prefetch"]] == ["dense", "dense"]

@@ -24,8 +24,6 @@ U1, U2 = {"X-User-Id": "u1"}, {"X-User-Id": "u2"}
 @pytest.fixture
 def archive(monkeypatch):
     """Kho gia co cung hinh dang tra ve voi conversations.py; `db.fail` mo phong MongoDB chet. Pipeline RAG gia: tra loi "ANS-1"."""
-    monkeypatch.setattr(cfg, "CONVERSATIONS_ENABLED", True)
-    monkeypatch.setattr(cfg, "SESSION_ENABLED", True)
     monkeypatch.setattr(session, "_store", None)
     db = SimpleNamespace(docs={}, fail=False)
 
@@ -118,16 +116,6 @@ def test_a_mongodb_outage_does_not_break_the_answer_and_only_the_error_class_is_
     assert "ConnectionError" in caplog.text and "SECRET" not in caplog.text and "CAU-HOI-RIENG" not in caplog.text
 
 
-@ENDPOINTS
-def test_nothing_is_archived_without_mongodb_uri_or_without_a_session(client, archive, monkeypatch, endpoint):
-    monkeypatch.setattr(cfg, "CONVERSATIONS_ENABLED", False)
-    ask(client, endpoint, "q")
-    monkeypatch.setattr(cfg, "CONVERSATIONS_ENABLED", True)
-    monkeypatch.setattr(cfg, "SESSION_ENABLED", False)  # khong co session_id thi khong co cuoc hoi thoai
-    assert client.post(endpoint, json={"question": "q"}).status_code == 200
-    assert archive.docs == {}
-
-
 # ---- Doc / xoa ----
 
 def test_list_needs_the_gateway_user_header_and_returns_only_that_users_conversations_newest_first(client, archive):
@@ -166,13 +154,6 @@ def test_delete_removes_the_archive_and_the_short_term_history_and_is_per_user(c
     assert asyncio.run(_history(SID, "u1")) == []
     assert client.get(f"/conversations/{SID}", headers=U1).status_code == 404
     assert client.delete(f"/conversations/{SID}", headers=U1).status_code == 404
-
-
-def test_endpoints_are_503_when_mongodb_is_not_configured(client, archive, monkeypatch):
-    monkeypatch.setattr(cfg, "CONVERSATIONS_ENABLED", False)
-    for call in (client.get("/conversations", headers=U1), client.get(f"/conversations/{SID}", headers=U1),
-                 client.delete(f"/conversations/{SID}", headers=U1)):
-        assert call.status_code == 503
 
 
 @pytest.mark.parametrize("call", ["list", "get", "delete"])
