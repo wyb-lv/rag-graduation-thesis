@@ -154,7 +154,6 @@ The ai-service documents are written in Vietnamese.
 
 ## Notes
 
-- `PUT /internal/documents/{id}/ocr` on file-service has **no authentication**; it is only safe because the gateway does not route `/internal/**`. Port 8080 of file-service is published to the host, so do not expose it publicly.
 - CORS is handled by the gateway; ai-service must not add `CORSMiddleware`.
 - Before a real deployment, change `JWT_SECRET` and the infrastructure passwords and turn off `ACCOUNT_SEED_ENABLED`.
 - After changing the OCR code you must re-run OCR **and** embedding for a document before Qdrant reflects the change.
