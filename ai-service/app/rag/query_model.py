@@ -2,7 +2,7 @@
 Bo loc metadata (kho, hieu luc, khoa, loai_van_ban) gan vao TUNG lan tim vector nen Qdrant thu hep tai lieu truoc khi lay top-k.
 Cac nhanh trong HYBRID_LEGS (dense, bm25) lay moi nhanh `top_k_retrieval` ung vien, hop nhat RRF phia Qdrant, roi
 reranker giu `top_k_rerank` doan tot nhat. Qwen viet lai cau hoi (query_rewrite.py), tim dense + bm25
-cho ca hai cau, RRF mot lan tren moi danh sach (Qdrant gop trung theo id) roi moi rerank theo cau goc.
+cho ca hai cau, RRF mot lan tren moi danh sach (Qdrant gop trung theo id) roi moi rerank: reranker cham CA HAI cau, diem la trung binh.
 Nap du lieu vao Qdrant qua POST /embed hoac RabbitMQ (ingest/embed_service.py); chay docker compose up -d truoc.
 """
 import argparse
@@ -157,9 +157,15 @@ def retrieve(question, kho=None, reference_date=None, top_k=None, khoa=None, loa
     ]
 
 
-def rerank(question, hits, top_k=None):
-    """Cham lai moi cap (question, text) bang reranker, sap giam dan theo diem, giu `top_k` (mac dinh top_k_rerank)."""
-    scores = encoders.rerank_scores(question, [h["text"] for h in hits])
+def rerank(question, hits, top_k=None, alt_question=None):
+    """Cham lai moi cap (question, text) bang reranker, sap giam dan theo diem, giu `top_k` (mac dinh top_k_rerank).
+    Co `alt_question` (cau viet lai) thi cham CA HAI cau va lay trung binh. Cham rieng cau goc thi tu long ("rot mon", "no mon") lam diem
+    doan dung chi con ~0.1 (reranker khong hieu), duoi RERANK_MIN_SCORE nen bi loai het; cau viet lai dung tu chinh thuc cho ~0.9.
+    Trung binh (khong lay max) de mot cau viet lai sai khong mot minh keo diem len."""
+    texts = [h["text"] for h in hits]
+    scores = encoders.rerank_scores(question, texts)
+    if alt_question:
+        scores = [(a + b) / 2 for a, b in zip(scores, encoders.rerank_scores(alt_question, texts))]
     ranked = sorted(zip(hits, scores), key=lambda hs: hs[1], reverse=True)
     return [{**h, "rerank_score": s} for h, s in ranked[:top_k or cfg.TOP_K_RERANK]]
 
@@ -180,12 +186,12 @@ def generate_answer_stream(question, hits, history=None, voice_mode: bool = Fals
 
 def find_hits(question, top_k=None, kho=None, reference_date=None, khoa=None, loai_van_ban=None):
     """Truy van hybrid + rerank + loc nguong (RERANK_MIN_SCORE): cac doan se dua vao LLM. Rong = cau hoi ngoai pham vi tai lieu.
-    Qwen viet lai `question` (query_rewrite.rewrite), dense + bm25 cua ca hai cau vao MOT lan RRF; rerank van cham theo `question`
-    goc, nen cau viet lai chi mo rong ung vien, khong doi tieu chi."""
+    Qwen viet lai `question` (query_rewrite.rewrite), dense + bm25 cua ca hai cau vao MOT lan RRF; rerank cham CA HAI cau (diem trung binh),
+    de cau viet lai dung tu chinh thuc cuu duoc cau hoi dung tu long."""
     top_k = top_k or cfg.TOP_K_RERANK
     alt = query_rewrite.rewrite(question)
     hits = retrieve(question, kho, reference_date, khoa=khoa, loai_van_ban=loai_van_ban, alt_question=alt)
-    hits = rerank(question, hits, top_k) if hits else []
+    hits = rerank(question, hits, top_k, alt_question=alt) if hits else []
     return [h for h in hits if h["rerank_score"] >= cfg.RERANK_MIN_SCORE]
 
 

@@ -10,6 +10,7 @@ import argparse
 import sys
 
 from app.rag import query_model as qm
+from app.rag import query_rewrite
 
 # (câu hỏi, từ khóa chữ thường phải xuất hiện trong tên tài liệu của đoạn đúng)
 IN_SCOPE = [
@@ -57,7 +58,8 @@ OUT_OF_SCOPE = [
 
 
 def top_score(question, khoa):
-    hits = qm.rerank(question, qm.retrieve(question, khoa=khoa))
+    alt = query_rewrite.rewrite(question)  # nhu find_hits: tim va cham ca cau goc lan cau viet lai (moi cau ton mot lan goi Groq)
+    hits = qm.rerank(question, qm.retrieve(question, khoa=khoa, alt_question=alt), alt_question=alt)
     return hits
 
 
