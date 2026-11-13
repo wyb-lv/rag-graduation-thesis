@@ -6,11 +6,13 @@ import com.example.fileservice.messaging.EmbedJobPublisher;
 import com.example.fileservice.services.DocumentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,10 +77,13 @@ public class DocumentController {
         try {
             Document doc = documentService.getDocumentById(id);
             Resource resource = documentService.loadFileAsResource(doc.getStoredFileName());
+            // Tên có dấu tiếng Việt phải mã hóa (RFC 5987), nếu không Tomcat bỏ mất cả header; content_type NULL (tài liệu cũ) thì dùng octet-stream
+            MediaType type = doc.getContentType() == null ? MediaType.APPLICATION_OCTET_STREAM : MediaType.parseMediaType(doc.getContentType());
             return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(doc.getContentType()))
+                    .contentType(type)
                     .contentLength(doc.getFileSize())
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + doc.getOriginalFileName() + "\"")
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            ContentDisposition.attachment().filename(doc.getOriginalFileName(), StandardCharsets.UTF_8).build().toString())
                     .body(resource);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
