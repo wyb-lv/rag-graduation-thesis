@@ -1,0 +1,8 @@
+# Phu luc nao bi bo khoi chunk (khong dua vao chi muc): tieu de phu luc (phan sau "PHU LUC <so>", hoac dong ke sau neu dong do chi co "PHU LUC <so>")
+# khop mot luat thi bo ca phu luc, den tieu de phu luc ke tiep hoac het van ban. Khong co phu luc nao khop thi khong bo gi.
+# Chi bo bieu mau trong va huong dan dung phan mem. Luu do, bang quy doi diem, bang tieu chi la noi dung quy dinh nen giu lai.
+# Moi dong: {"pattern": regex, "ignorecase": true, "ly_do": mo ta}. OCR hay sai dau ("MAU", "BIEU", "HUONG") nen regex de mo.
+{"pattern": "^(các\\s+)?m[ẫầâấẩ]u\\b|bi[ểếẻeêệ]u\\s*m[ẫầâấẩ]u", "ignorecase": true, "ly_do": "bieu mau (\"mau\" dung cuoi tieu de nhu \"ke hoach hoc tap mau\" khong phai bieu mau)"}
+{"pattern": "h[ưu][ớơo]ng\\s+d[ẫẩâa]n", "ignorecase": true, "ly_do": "huong dan dung phan mem"}
+{"pattern": "th[oô]ng\\s+tin\\s+tuy[eể]n\\s+sinh", "ignorecase": true, "ly_do": "mau thong tin tuyen sinh (Bo GD&DT)"}
+{"pattern": "s[ốo]\\s+g[ốóo]c", "ignorecase": true, "ly_do": "so goc cap van bang (mau)"}
