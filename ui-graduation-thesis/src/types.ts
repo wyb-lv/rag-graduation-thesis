@@ -37,7 +37,37 @@ export interface Conversation {
   createdAt?: string
 }
 
-export type ActiveView = 'chat' | 'ocr' | 'call'
+export type ActiveView = 'chat' | 'ocr' | 'call' | 'accounts'
+
+export type UserRoleType = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+
+export interface AccountItem {
+  id: number
+  username: string
+  email: string
+  departmentId: number
+  departmentName?: string
+  role: UserRoleType
+  isActive: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface CreateAccountInput {
+  username: string
+  email: string
+  password?: string
+  departmentId: number
+  role: UserRoleType
+}
+
+export interface UpdateAccountInput {
+  email?: string
+  departmentId?: number
+  role?: UserRoleType
+  isActive?: boolean
+  password?: string
+}
 
 export type OcrStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
 

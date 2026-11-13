@@ -80,6 +80,24 @@ export function LeftSidebar() {
             </div>
             <span className="truncate">Tải tài liệu & OCR</span>
           </button>
+
+          {/* Hàng 4: Quản lý tài khoản */}
+          <button
+            className={`w-full h-9 flex items-center gap-3 pl-2 pr-3 rounded-lg transition-colors text-left font-normal ${
+              activeView === 'accounts'
+                ? 'bg-[#252525] text-[#55b9ff] font-medium'
+                : 'text-white/80 hover:bg-[#212121] hover:text-white'
+            }`}
+            type="button"
+            onClick={() => setActiveView('accounts')}
+          >
+            <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            </div>
+            <span className="truncate">Quản lý tài khoản</span>
+          </button>
         </div>
 
         {/* Danh sách lịch sử chat */}
