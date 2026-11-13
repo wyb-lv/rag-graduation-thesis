@@ -42,7 +42,7 @@ Cau hinh tap trung o `config.py`. Bon bien cu doc tu moi truong (`.env` cua ai-s
 | `RERANK_MODEL` / `RERANK_REVISION` | `Horizon-Labs/multilingual-reranker-base` / commit da ghim | Reranker CrossEncoder (sentence-transformers); weights, config, tokenizer lay dung revision nay. `RERANK_MODEL` co the la thu muc local |
 | `RERANK_DTYPE` | `float16` | dtype tren GPU (tren CPU luon `float32`) |
 | `RERANK_CPU_ON_OOM` | `0` | CUDA OOM ngay ca khi cham 1 doan/lan thi chuyen reranker sang CPU |
-| `EMBED_BATCH_SIZE` / `EMBED_MAX_LENGTH` | `16` / `512` | Tu dong giam batch khi OOM |
+| `EMBED_BATCH_SIZE` / `EMBED_MAX_LENGTH` | `16` / `768` | Tu dong giam batch khi OOM |
 | `RERANK_BATCH_SIZE` / `RERANK_MAX_LENGTH` | `16` / `512` | So cap (cau hoi, doan) cham mot luot (chia doi khi OOM) / so token toi da cua ca cap, phan thua bi cat |
 | `RERANK_MIN_SCORE` | `0.2` | Diem rerank (sigmoid, 0..1) toi thieu cua mot doan; `0` de tat |
 | `HNSW_EF` | `128` | efSearch cua nhanh dense |
