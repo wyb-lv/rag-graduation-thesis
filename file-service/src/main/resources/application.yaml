@@ -69,6 +69,11 @@ internal:
   # Để trống = từ chối mọi request tới /internal/**.
   token: ${INTERNAL_TOKEN:}
 
+reconcile:
+  # Quét định kỳ: tài liệu mất file trên MinIO thì xóa văn bản OCR + vector theo; vector không còn tài liệu thì xóa (xem DocumentReconciler)
+  initial-delay: PT30S
+  interval: PT60S
+
 ocr:
   # OCR do ai-service làm (lấy job từ hàng đợi, tải file qua GET /api/documents/download/{id}, báo kết quả về PUT /internal/documents/{id}/ocr).
   publish-confirm-timeout: 5s

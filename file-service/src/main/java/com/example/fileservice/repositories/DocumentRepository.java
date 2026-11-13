@@ -14,6 +14,15 @@ import java.util.List;
 
 public interface DocumentRepository extends JpaRepository<Document, Long> {
 
+    /** Chỉ id và tên object, không kéo theo cột văn bản OCR (rất lớn). */
+    interface StoredFile {
+        Long getId();
+
+        String getStoredFileName();
+    }
+
+    List<StoredFile> findAllBy();
+
     @Query("select d.id from Document d where d.ocrStatus in :statuses and d.ocrQueuedAt is null order by d.id")
     List<Long> findIdsNotQueued(@Param("statuses") Collection<OcrStatus> statuses);
 

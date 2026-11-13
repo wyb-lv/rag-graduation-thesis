@@ -2,11 +2,14 @@ package com.example.fileservice.services;
 
 import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
+import io.minio.ListObjectsArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.Result;
 import io.minio.errors.ErrorResponseException;
+import io.minio.messages.Item;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -15,6 +18,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
+import java.util.HashSet;
 import java.util.Set;
 
 /** Lưu file upload trên MinIO; tên object là Document.storedFileName. */
@@ -74,6 +78,19 @@ public class FileStorageService {
             minio.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(objectName).build());
         } catch (Exception e) {
             throw new StorageException("Không xóa được file trên MinIO: " + objectName, e);
+        }
+    }
+
+    /** Tên mọi object trong bucket. Lỗi (MinIO chưa lên...) thì ném StorageException để người gọi không nhầm là bucket rỗng. */
+    public Set<String> listObjectNames() {
+        try {
+            Set<String> names = new HashSet<>();
+            for (Result<Item> item : minio.listObjects(ListObjectsArgs.builder().bucket(bucket).recursive(true).build())) {
+                names.add(item.get().objectName());
+            }
+            return names;
+        } catch (Exception e) {
+            throw new StorageException("Không liệt kê được object trên MinIO", e);
         }
     }
 

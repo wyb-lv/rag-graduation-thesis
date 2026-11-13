@@ -4,6 +4,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 import static com.example.fileservice.config.RabbitMQConfig.EMBED_EXCHANGE;
 import static com.example.fileservice.config.RabbitMQConfig.EMBED_ROUTING_KEY;
 
@@ -47,11 +49,24 @@ public class EmbedJobPublisher {
      */
     public void publishDelete(Long documentId) {
         try {
-            EmbedJobMessage msg = new EmbedJobMessage(documentId, null, null, null, null, "DELETE");
+            EmbedJobMessage msg = new EmbedJobMessage(documentId, null, null, null, null, "DELETE", null);
             rabbitTemplate.convertAndSend(EMBED_EXCHANGE, EMBED_ROUTING_KEY, msg);
             log.info("Đã gửi delete embed job cho tài liệu {}", documentId);
         } catch (Exception e) {
-            log.warn("Không gửi được delete embed job cho tài liệu {}: {}", documentId, e.getMessage());
+            log.warn("Không gửi được delete embed job cho tài liệu {} (lượt đối chiếu sau sẽ dọn): {}", documentId, e.getMessage());
+        }
+    }
+
+    /**
+     * Bảo ai-service xóa vector của mọi tài liệu không nằm trong danh sách. Job DELETE chỉ gửi một lần nên có thể mất;
+     * lệnh này gửi định kỳ nên vector mồ côi nào cũng bị dọn.
+     */
+    public void publishPrune(List<Long> keepIds) {
+        try {
+            rabbitTemplate.convertAndSend(EMBED_EXCHANGE, EMBED_ROUTING_KEY,
+                    new EmbedJobMessage(null, null, null, null, null, "PRUNE", keepIds));
+        } catch (Exception e) {
+            log.warn("Không gửi được prune embed job: {}", e.getMessage());
         }
     }
 }
