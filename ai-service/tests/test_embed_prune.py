@@ -8,8 +8,12 @@ from app.ingest import embed_consumer, embed_service
 class FakeQdrant:
     """Hai trang scroll: tài liệu 1, 2 ở trang đầu, 2 (chunk khác) và 3 ở trang sau."""
 
-    def __init__(self):
+    def __init__(self, exists=True):
+        self.exists = exists
         self.pages = {None: ([1, 2], "next"), "next": ([2, 3], None)}
+
+    def collection_exists(self, name):
+        return self.exists
 
     def scroll(self, collection, limit, offset, with_payload, with_vectors):
         ids, nxt = self.pages[offset]
@@ -36,6 +40,11 @@ def test_prune_reads_every_page_of_the_collection(deleted):
 def test_prune_keeps_everything_when_every_document_is_still_listed(deleted):
     assert embed_service.prune_vectors({1, 2, 3, 4}) == []
     assert deleted == []
+
+
+def test_prune_on_a_collection_that_does_not_exist_yet_is_a_no_op(monkeypatch):
+    monkeypatch.setattr(embed_service, "_get_qdrant", lambda: FakeQdrant(exists=False))
+    assert embed_service.prune_vectors({1, 2}) == []
 
 
 def test_prune_with_an_empty_list_deletes_nothing(deleted):

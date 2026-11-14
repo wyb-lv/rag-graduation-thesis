@@ -2,7 +2,7 @@
 
 Graduation thesis project: a chatbot that answers students' questions from the university's official regulations (RAG). An administrator uploads PDF / DOCX / scanned images, the system OCRs, chunks and indexes them automatically, and users ask questions by text or voice and get answers with source citations.
 
-- **RAG question answering**: dense vector search (BGE-M3) and BM25 keyword search run together, are merged with RRF inside Qdrant, re-scored by a reranker, and an LLM (Groq Qwen) writes the answer with citations. Answers stream over SSE.
+- **RAG question answering**: dense vector search (Vietnamese_Embedding_v2) and BM25 keyword search run together, are merged with RRF inside Qdrant, re-scored by a reranker, and an LLM (Groq Qwen) writes the answer with citations. Answers stream over SSE.
 - **LLM router** (Gemini): recognises greetings, off-topic questions and follow-ups, and rewrites the question before retrieval. Prompt-injection guards on input and output.
 - **OCR**: PDFs with a text layer and DOCX files are read directly (no recognition errors possible); scanned pages and images go through PaddleOCR-VL-1.6. Tables are kept as Markdown.
 - **Voice**: speech-to-text (STT) and text-to-speech (TTS), plus a voice-call mode.
@@ -52,7 +52,7 @@ Main gateway routes (the full list is in the Swagger UI):
 
 1. An admin uploads a file with `POST /api/documents/upload`. file-service stores it in MinIO, writes a DB row (`PENDING`) and queues an OCR job in RabbitMQ.
 2. ai-service takes the OCR job, downloads the file, extracts text and tables, and reports the text back to file-service (`COMPLETED`).
-3. file-service queues an embed job. ai-service splits the text by Chapter / Article / clause, builds dense (BGE-M3) vectors and BM25 weights, and writes them to the `quy_dinh_hybrid_v2` collection in Qdrant. Re-embedding a document deletes its old vectors first.
+3. file-service queues an embed job. ai-service splits the text by Chapter / Article / clause, builds dense (Vietnamese_Embedding_v2) vectors and BM25 weights, and writes them to the `quy_dinh_hybrid_v3` collection in Qdrant. Re-embedding a document deletes its old vectors first.
 
 Re-run OCR for one document: `POST /api/documents/{id}/ocr`. Re-embed without OCR: `POST /api/documents/{id}/embed`.
 
@@ -62,7 +62,7 @@ Re-run OCR for one document: `POST /api/documents/{id}/ocr`. Re-embed without OC
 
 ## Requirements
 
-- Docker Desktop (WSL2 on Windows) and an **NVIDIA GPU** with a CUDA 12.6+ driver. The GPU is used by BGE-M3, the reranker and PaddleOCR-VL.
+- Docker Desktop (WSL2 on Windows) and an **NVIDIA GPU** with a CUDA 12.6+ driver. The GPU is used by the embedding model, the reranker and PaddleOCR-VL.
 - API keys for **Gemini** (router) and **Groq** (answer LLM, STT).
 - To run services outside Docker: JDK 21, Python 3.13, Node.js.
 
@@ -86,7 +86,7 @@ EOF
 docker compose up -d --build        # Compose v1: docker-compose
 ```
 
-The first start is slow: PaddleOCR images are several GB, vLLM compiles for a few minutes, and ai-service downloads BGE-M3 + the reranker (~3 GB) into the `hf_cache` volume on the first request.
+The first start is slow: PaddleOCR images are several GB, vLLM compiles for a few minutes, and ai-service downloads the embedding model + the reranker (~3 GB) into the `hf_cache` volume on the first request.
 
 Then:
 

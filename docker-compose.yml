@@ -220,7 +220,7 @@ services:
     ports:
       - "8001:8000"   # API + Swagger UI (http://localhost:8001/docs); 8000 hay bị uvicorn chạy tay trên máy chiếm
     volumes:
-      - hf_cache:/data/hf   # BGE-M3 + reranker (~3GB), tải lần đầu khi có request /ask
+      - hf_cache:/data/hf   # model embedding + reranker (~3GB), tải lần đầu khi có request /ask
       - groq_cache:/data/groq_cache
     # Cần NVIDIA GPU + Docker Desktop (WSL2). Máy không có GPU: xóa khối `deploy` và build bản CPU (xem ai-service/Dockerfile).
     deploy:
@@ -301,7 +301,7 @@ services:
       - "${GATEWAY_PORT:-9090}:9090"
 
 # Cấu hình vLLM của paddleocr-vlm-server (--backend_config). vLLM chiếm trước `gpu-memory-utilization` x tổng VRAM lúc khởi động, nên phải chia
-# với ai-service (BGE-M3 + reranker) dùng chung GPU: PaddleOCR khuyến nghị 0.7 cho RTX 3060 12GB; model 0.9B bf16 riêng đã ~1.9GB.
+# với ai-service (model embedding + reranker) dùng chung GPU: PaddleOCR khuyến nghị 0.7 cho RTX 3060 12GB; model 0.9B bf16 riêng đã ~1.9GB.
 # Đặt OCR_VLM_GPU_UTIL / OCR_VLM_MAX_SEQS trong .env để đổi theo máy.
 configs:
   vlm_server_config:

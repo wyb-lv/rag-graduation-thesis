@@ -4,8 +4,8 @@
   - API endpoint POST /embed  (FE hoặc admin trigger thủ công)
   - RabbitMQ consumer: nhận job từ file-service sau khi OCR xong
 
-Mỗi tài liệu được làm sạch và chia chunk theo Chương/Điều/khoản (xem chunker.py), encode bằng BGE-M3 (dense, sentence-transformers) và tính vector BM25 (bm25.py),
-rồi upsert vào Qdrant collection `quy_dinh_hybrid_v2`.
+Mỗi tài liệu được làm sạch và chia chunk theo Chương/Điều/khoản (xem chunker.py), encode bằng model embedding (EMBED_MODEL, dense, sentence-transformers) và tính vector BM25 (bm25.py),
+rồi upsert vào Qdrant collection `quy_dinh_hybrid_v3`.
 """
 import logging
 import uuid
@@ -128,6 +128,8 @@ def prune_vectors(keep_ids: set[int]) -> list[int]:
         log.warning("Bỏ qua prune: danh sách tài liệu còn tồn tại rỗng.")
         return []
     client = _get_qdrant()
+    if not client.collection_exists(cfg.QDRANT_COLLECTION):
+        return []  # collection mới (đổi model/tên), chưa embed tài liệu nào nên không có gì để dọn
     in_qdrant, offset = set(), None
     while True:
         # shortcut: quét hết payload mỗi lượt (document_id chưa có payload index để facet); hàng chục nghìn điểm thì tạo index rồi dùng facet

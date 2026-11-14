@@ -1,4 +1,4 @@
-"""Tra loi cau hoi bang RAG hybrid + rerank: loc metadata -> BGE-M3 (dense) + BM25 -> Qdrant RRF -> CrossEncoder reranker -> Groq Qwen.
+"""Tra loi cau hoi bang RAG hybrid + rerank: loc metadata -> model embedding (dense) + BM25 -> Qdrant RRF -> CrossEncoder reranker -> Groq Qwen.
 Bo loc metadata (kho, hieu luc, khoa, loai_van_ban) gan vao TUNG lan tim vector nen Qdrant thu hep tai lieu truoc khi lay top-k.
 Cac nhanh trong HYBRID_LEGS (dense, bm25) lay moi nhanh `top_k_retrieval` ung vien, hop nhat RRF phia Qdrant, roi
 reranker giu `top_k_rerank` doan tot nhat. Qwen viet lai cau hoi (query_rewrite.py), tim dense + bm25
@@ -81,7 +81,7 @@ def build_filter(kho=None, reference_date=None, khoa=None, loai_van_ban=None):
 
 def _query_legs(question, legs):
     """{ten nhanh: vector truy van} cho cac nhanh co token; nhanh khong co token (vd cau hoi toan dau cau) bi bo.
-    Chi nap BGE-M3 (GPU) khi co nhanh dense; bm25 chay CPU (bm25.py)."""
+    Chi nap model embedding (GPU) khi co nhanh dense; bm25 chay CPU (bm25.py)."""
     queries = {}
     for leg in legs:
         if leg == "dense":

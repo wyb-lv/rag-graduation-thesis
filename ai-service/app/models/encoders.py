@@ -1,4 +1,4 @@
-"""Nap BGE-M3 (dense, SentenceTransformer) va reranker (CrossEncoder) mot lan moi tien trinh, ca hai bang sentence-transformers.
+"""Nap model embedding (cfg.EMBED_MODEL, dense, SentenceTransformer) va reranker (CrossEncoder) mot lan moi tien trinh, ca hai bang sentence-transformers.
 
 Nhanh lexical la BM25 (bm25.py, chay CPU).
 Ingest (embed_service.py) va truy van (query_model.py) deu di qua encode_texts() de dung cung mot duong ma hoa.
@@ -28,12 +28,13 @@ def _device(configured):
 
 
 def _embedder_path():
-    """Thu muc local cua BGE-M3 chi gom file can cho suy luan (SentenceTransformer tu tai ca repo, them ~2GB ONNX/anh)."""
+    """Thu muc local cua model embedding (dung cfg.EMBED_REVISION), chi gom file can cho suy luan (SentenceTransformer tu tai ca repo, them ~2GB ONNX/anh)."""
     if os.path.exists(cfg.EMBED_MODEL):
         path = cfg.EMBED_MODEL
     else:
         path = snapshot_download(
             cfg.EMBED_MODEL,
+            revision=cfg.EMBED_REVISION or None,
             ignore_patterns=["onnx/*", "imgs/*", "*.jpg", "flax_model.msgpack", "rust_model.ot", "tf_model.h5"],
         )
 
@@ -104,7 +105,7 @@ def _retry_on_oom(run, batch_size):
 
 
 def encode_texts(texts, batch_size=None):
-    """Ma hoa dense bang BGE-M3: tra ve ndarray [n, 1024] da chuan hoa (cosine)."""
+    """Ma hoa dense bang model embedding: tra ve ndarray [n, 1024] da chuan hoa (cosine)."""
     embedder = get_embedder()
 
     def run(bs):

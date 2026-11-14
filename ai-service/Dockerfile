@@ -6,7 +6,7 @@ ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    # Model BGE-M3 + reranker tai ve day (mount volume de khong tai lai moi lan tao container)
+    # Model embedding + reranker tai ve day (mount volume de khong tai lai moi lan tao container)
     HF_HOME=/data/hf \
     GROQ_CACHE_DIR=/data/groq_cache
 

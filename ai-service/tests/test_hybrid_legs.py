@@ -28,7 +28,7 @@ class FakeQdrant:
 
 @pytest.fixture
 def stub(monkeypatch):
-    """Thay encode và Qdrant bằng bản giả; `encoded` đếm số lần gọi BGE-M3."""
+    """Thay encode và Qdrant bằng bản giả; `encoded` đếm số lần gọi model embedding."""
     state = SimpleNamespace(lexical={"10": 0.5, "20": 0.25}, qdrant=FakeQdrant(), encoded=0)
 
     def encode(texts, batch_size=None):
