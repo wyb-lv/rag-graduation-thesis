@@ -36,7 +36,7 @@ RERANK_DEVICE = None
 # Khi CUDA OOM ngay ca khi chi cham 1 doan/lan: chuyen reranker sang CPU thay vi bao loi.
 RERANK_CPU_ON_OOM = False
 EMBED_BATCH_SIZE = 16
-EMBED_MAX_LENGTH = 512
+EMBED_MAX_LENGTH = 768  # chunk dai nhat trong kho ~764 token (BGE-M3 toi da 8192); 512 cu cat ~6.5% chunk
 # So cap (cau hoi, doan) cham trong mot luot chay model; khi OOM thi chia doi. Moi cap cham doc lap nen batch khong doi diem.
 RERANK_BATCH_SIZE = 16
 RERANK_MAX_LENGTH = 512  # token toi da cua ca cap (cau hoi + doan), phan thua bi cat; de vua VRAM 4GB

@@ -49,9 +49,13 @@ def _fetch_document_text(document_id: int) -> Optional[str]:
 
 
 def _process_job(body: dict):
-    """Xử lý một job embed (UPSERT hoặc DELETE)."""
+    """Xử lý một job embed (UPSERT, DELETE hoặc PRUNE)."""
     document_id = body.get("documentId")
     action = body.get("action", "UPSERT")
+
+    if action == "PRUNE":
+        embed_service.prune_vectors(set(body.get("keepIds") or []))
+        return
 
     if action == "DELETE":
         log.info("Nhận yêu cầu xóa vector Qdrant cho tài liệu %s", document_id)
@@ -124,7 +128,7 @@ def _run_consumer():
             def on_message(ch, method, properties, body_bytes):
                 try:
                     body = json.loads(body_bytes)
-                    log.info("Nhận embed job: %s", body)
+                    log.info("Nhận embed job: %s", {**body, "keepIds": len(body["keepIds"])} if body.get("keepIds") else body)
                     _process_job(body)
                     ch.basic_ack(delivery_tag=method.delivery_tag)
                 except Exception as e:

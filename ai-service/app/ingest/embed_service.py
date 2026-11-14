@@ -78,12 +78,14 @@ def embed_document(
 
     client = _get_qdrant()
     _ensure_collection(client)
+    # Encode trước khi xóa: encode lỗi (CUDA...) thì vector cũ còn nguyên, không mất cả tài liệu
+    all_dense = encoders.encode_texts(paragraphs)
     # Embed lại (sau OCR lại) phải thay vector cũ, không được chồng lên
     delete_document_vectors(document_id)
     total_upserted = 0
     for batch_start in range(0, len(paragraphs), cfg.UPSERT_BATCH_SIZE):
         batch = paragraphs[batch_start: batch_start + cfg.UPSERT_BATCH_SIZE]
-        dense_vecs = encoders.encode_texts(batch)
+        dense_vecs = all_dense[batch_start: batch_start + len(batch)]
 
         points = []
         for i, (para, dvec) in enumerate(zip(batch, dense_vecs)):
@@ -116,6 +118,29 @@ def embed_document(
 
     log.info("Embed tài liệu %d hoàn tất: %d/%d đoạn đã index.", document_id, total_upserted, len(paragraphs))
     return {"upserted": total_upserted, "paragraphs": len(paragraphs)}
+
+
+def prune_vectors(keep_ids: set[int]) -> list[int]:
+    """Xóa vector của mọi tài liệu không còn trong `keep_ids` (job DELETE bị mất, hoặc file bị xóa thẳng khỏi MinIO).
+    Trả về các document_id đã dọn."""
+    if not keep_ids:
+        # file-service báo không còn tài liệu nào nhiều khả năng là DB bị reset, không phải xóa sạch; vector có thể là bản duy nhất còn lại
+        log.warning("Bỏ qua prune: danh sách tài liệu còn tồn tại rỗng.")
+        return []
+    client = _get_qdrant()
+    in_qdrant, offset = set(), None
+    while True:
+        # shortcut: quét hết payload mỗi lượt (document_id chưa có payload index để facet); hàng chục nghìn điểm thì tạo index rồi dùng facet
+        points, offset = client.scroll(cfg.QDRANT_COLLECTION, limit=1000, offset=offset, with_payload=["document_id"], with_vectors=False)
+        in_qdrant |= {p.payload["document_id"] for p in points if p.payload and "document_id" in p.payload}
+        if offset is None:
+            break
+    stale = sorted(in_qdrant - set(keep_ids))
+    for document_id in stale:
+        delete_document_vectors(document_id)
+    if stale:
+        log.info("Prune: đã xóa vector mồ côi của các tài liệu %s", stale)
+    return stale
 
 
 def delete_document_vectors(document_id: int) -> int:

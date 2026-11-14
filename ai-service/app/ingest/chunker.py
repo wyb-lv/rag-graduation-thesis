@@ -17,14 +17,21 @@ MIN_CHARS = 150        # chunk ngắn hơn mức này thì gộp vào chunk kề
 # OCR hay làm hỏng dấu ("Piéu", "Ei6u", "Điểu", "Chuong") nên regex tiêu đề để mờ: chấp nhận ký tự rác/ô bảng đứng trước ("! Điều 9.",
 # "| : | Điều 12.", ". Điều 5.") và dấu chấm bị đọc thành "," hoặc ";" ("Điều 9, Xử lý ..."; xem _heading).
 _DIEU = re.compile(r"^[\s|!*#~_:.,;'\"‘’“”`]*(?:Đ|D|P|B|E)\S{0,3}u\s*(\d{1,3})\s*([.:,;])\s*(.*)$", re.I)
-_CHUONG = re.compile(r"^\s*Ch\S{1,4}ng\s+([IVXLC1lJ]{1,6})\b[.\s]*(.*)$", re.I)
+_CHUONG = re.compile(r"^[\s#*]*Ch\S{1,4}ng\s+([IVXLC1lJ]{1,6})\b[.\s]*(.*)$", re.I)  # "## " / "**" là đánh dấu markdown của OCR
+_PAGE_REF = re.compile(r"\s\d{1,3}\s*$")  # dòng mục lục thiếu dấu chấm dẫn: "Chương III QUYỀN HẠN ... 12"
+_REPEAT = re.compile(r"(\b\w+(?:\s+\w+){0,2}?)(?:\s+\1\b){7,}", re.I)  # OCR (VLM) lặp vô hạn một từ/cụm: "PHẠI PHẠI PHẠI ..."
 _PHULUC = re.compile(r"^\s*PH[UỤ]\s*L[UỤ]C\b(.*)$", re.I)
 _NOI_NHAN = re.compile(r"^\s*N[oơ]i\s+nh[aậ]n\b", re.I)
 _KHOAN = re.compile(r"^\s*\d{1,2}\s*[.)]\s+\S")
 _DIEM = re.compile(r"^\s*(?:[a-zđ]\)|[-•+–]\s)\s*\S")
-_PAGE_NUM = re.compile(r"^\s*[|\[(]?\s*(?:Trang\s*[|:]?\s*)?\d{1,3}\s*[|\])]?\s*$", re.I)
+_PAGE_NUM = re.compile(r"^\s*[|\[(]?\s*(?:Trang\s*[|:]?\s*)?\d{1,3}(?:\s*/\s*\d{1,3})?\s*[|\])]?\s*$", re.I)  # "5", "Trang 5", "18/27"
 _RUNNING_HEADER = re.compile(r"\bM[aãàáạ]\s*(?:hi[eêéệ]u|t[aàá]i\s*li[eêéệ]u)\b\s*:", re.I)
 _TOC_LINE = re.compile(r"\.{5,}|…{3,}")
+_TOC_PAGE = re.compile(r"(?:\.{3,}|…+)\s*\d{1,3}\s*$")  # dấu chấm dẫn rồi số trang ở cuối dòng
+# Tiêu đề phụ lục kể cả khi OCR thêm "## " hoặc "| " phía trước và đọc "LỤC" thành "LỰC". Nhóm 1 = phần còn lại của dòng.
+_APPENDIX_HEAD = re.compile(r"^[\s|#*]*PH[UỤ]\s*L[UỤỰ]C\b(.*)$", re.I)
+_APPENDIX_NUMBER = re.compile(r"^\s*(?:[IVXLC]{1,6}|\d{1,2})\b[\s.:–-]*")
+_SKIP_APPENDIX = texts.read_rules("appendix_skip.jsonl", "ly_do")  # (regex tren tieu de phu luc, ly do), app/texts/
 _DOC_TYPES = texts.read_rules("document_types.jsonl", "loai")  # (regex tren ten tai lieu viet thuong, loai_van_ban), app/texts/
 
 
@@ -39,13 +46,32 @@ def _heading(s: str) -> Optional[tuple[int, str]]:
     return int(m.group(1)), title
 
 
+def _chuong(s: str) -> Optional[re.Match]:
+    """Khớp tiêu đề Chương, trừ dòng mục lục kết thúc bằng số trang (nhãn Chương lấy từ mục lục sẽ gắn sai vào mọi chunk)."""
+    m = _CHUONG.match(s)
+    return None if m and _PAGE_REF.search(s) else m
+
+
 def _unpipe(s: str) -> Optional[str]:
     """Tiêu đề Điều/Chương bị OCR dựng thành hàng bảng ("| Điều 3. Học phí | / |  |"): trả về ô chứa tiêu đề."""
     for cell in s.split("|"):
         c = cell.strip()
-        if _heading(c) or _CHUONG.match(c):
+        if _heading(c) or _chuong(c):
             return c
     return None
+
+
+def _is_skipped_appendix(lines: list[str], j: int) -> bool:
+    """Dòng j là tiêu đề một phụ lục cần bỏ (biểu mẫu, hướng dẫn dùng phần mềm...: luật trong appendix_skip.jsonl)?
+    Dòng dài, hoặc có chữ sau số phụ lục mà kết thúc bằng dấu câu, là câu văn bắt đầu bằng "Phụ lục I quy định...", không phải tiêu đề."""
+    s = lines[j]
+    rest = _APPENDIX_NUMBER.sub("", _APPENDIX_HEAD.match(s).group(1), count=1).strip()
+    if len(s) > 200 or (len(rest) >= 6 and rest.endswith((".", ";", ","))):
+        return False
+    title = rest.split("(")[0].strip()  # bỏ "(Áp dụng...)", "(Kèm theo...)"
+    if len(title) < 6 and j + 1 < len(lines):
+        title = lines[j + 1].lstrip("|#* ").split("(")[0].strip()  # "PHỤ LỤC II" đứng riêng một dòng, tên ở dòng sau (bỏ "# " của OCR)
+    return any(pattern.search(title) for pattern, _ in _SKIP_APPENDIX)
 
 
 @dataclass
@@ -62,9 +88,13 @@ def clean_lines(text: str) -> list[str]:
         s = raw.strip()
         if not s:
             continue
+        s = _REPEAT.sub(r"\1", s)
         if "|" in s:
             s = _unpipe(s) or s  # không để bộ lọc "dòng toàn ký hiệu" xóa mất tiêu đề nằm trong hàng bảng
-        if _PAGE_NUM.match(s) or _RUNNING_HEADER.search(s) or _TOC_LINE.search(s):
+        toc = _TOC_LINE.search(s)
+        if toc and _APPENDIX_HEAD.match(s) and not _TOC_PAGE.search(s):
+            s, toc = s[:toc.start()].rstrip(), None  # tiêu đề phụ lục mẫu có đuôi chấm để trống ("KHOA........"), không phải mục lục (có số trang)
+        if _PAGE_NUM.match(s) or _RUNNING_HEADER.search(s) or toc:
             continue
         letters = sum(c.isalpha() for c in s)
         digits = sum(c.isdigit() for c in s)
@@ -175,14 +205,16 @@ def chunk_document(text: str, source: str) -> list[Chunk]:
     chunks: list[Chunk] = []
     chuong: Optional[str] = None
     for s in lines[max(0, sections[0][0] - 5):sections[0][0]]:  # Chương I nằm ngay trước Điều 1
-        if _CHUONG.match(s):
-            chuong = _chuong_label(_CHUONG.match(s))
+        if _chuong(s):
+            chuong = _chuong_label(_chuong(s))
     starts = [i for i, _, _ in sections] + [len(lines)]
     for k, (i, n, title) in enumerate(sections):
         body_lines = []
         skipping = False
-        for s in lines[i + 1:starts[k + 1]]:
-            mc = _CHUONG.match(s)
+        skip_appendix = False  # đang ở trong phụ lục bị bỏ, kéo dài đến tiêu đề phụ lục kế tiếp (hoặc hết văn bản)
+        for j in range(i + 1, starts[k + 1]):
+            s = lines[j]
+            mc = _chuong(s)
             if mc:
                 chuong = _chuong_label(mc)
                 continue
@@ -190,7 +222,9 @@ def chunk_document(text: str, source: str) -> list[Chunk]:
                 skipping = True  # khối nơi nhận + chữ ký cuối văn bản
             if _PHULUC.match(s):
                 skipping = False
-            if not skipping:
+            if _APPENDIX_HEAD.match(s):
+                skip_appendix = _is_skipped_appendix(lines, j)
+            if not skipping and not skip_appendix:
                 body_lines.append(s)
         dieu = f"Điều {n}" + (f". {title}" if title else "")
         prefix = f"[{source}" + (f" – {chuong}" if chuong else "") + f" – {dieu}]"
