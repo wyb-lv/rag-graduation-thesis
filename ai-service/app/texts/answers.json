@@ -1,0 +1,14 @@
+{
+  "ABOUT": "Tôi là trợ lý tra cứu quy định của Trường Đại học Hoa Sen. Tôi tìm quy chế, quy định, thông báo, biểu mẫu và hướng dẫn trong các kho văn bản của trường, trả lời kèm trích dẫn (tên văn bản, Điều, Khoản) và nói rõ khi các văn bản không chứa câu trả lời. Với nội dung nằm ngoài các văn bản, bạn vui lòng liên hệ phòng, ban phụ trách.",
+  "NO_RESULT_ANSWER": "Không tìm thấy quy định liên quan đến câu hỏi trong các văn bản được cung cấp.",
+  "CLARIFY_ANSWER_AUDIENCE": "Bạn là sinh viên khóa nào hoặc thuộc chương trình đào tạo nào để tôi tra cứu đúng quy định áp dụng?",
+  "CLARIFY_ANSWER_TIME": "Bạn muốn hỏi cho học kỳ hoặc năm học nào?",
+  "CLARIFY_ANSWER_TOPIC": "Bạn muốn hỏi về quy định hoặc chủ đề nào của trường (ví dụ học bổng, học phí, đăng ký học phần)?",
+  "GUARD_REFUSAL_ANSWER": "Tôi không thể thực hiện yêu cầu này. Bạn có thể hỏi tôi về quy chế, quy định, thông báo hoặc biểu mẫu của Trường Đại học Hoa Sen.",
+  "GUARD_REPLY_CAPABILITY": "{ABOUT} Bạn cứ đặt câu hỏi về quy định nhé.",
+  "GUARD_REPLY_GOODBYE": "Tạm biệt! Khi cần tra cứu quy định, bạn cứ quay lại nhé.",
+  "GUARD_REPLY_GREETING": "Xin chào! {ABOUT} Bạn muốn tra cứu nội dung gì?",
+  "GUARD_REPLY_META": "Tôi là trợ lý tra cứu quy định của Trường Đại học Hoa Sen và không chia sẻ thông tin cấu hình nội bộ. Bạn có thể hỏi tôi về quy chế, quy định, thông báo hoặc biểu mẫu của trường.",
+  "GUARD_REPLY_THANKS": "Không có gì! Bạn cần tra cứu thêm quy định nào cứ hỏi nhé.",
+  "OFF_TOPIC_ANSWER": "Tôi chỉ hỗ trợ tra cứu quy chế, quy định, thông báo, biểu mẫu và hướng dẫn của Trường Đại học Hoa Sen. Bạn vui lòng đặt lại câu hỏi theo một chủ đề quy định của trường nhé."
+}

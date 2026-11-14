@@ -1,0 +1,19 @@
+# Sua loi dong am / phat am dia phuong cua STT sang thuat ngu hoc vu chuan (chay tuan tu, tren van ban nhan dang duoc).
+# Moi dong: {"pattern": regex, "replace": chuoi thay (\\1 = nhom 1), "ignorecase": true (tuy chon)}
+{"pattern": "\\btính\\s+chỉ\\b", "replace": "tín chỉ", "ignorecase": true}
+{"pattern": "\\btín\\s+chĩ\\b", "replace": "tín chỉ", "ignorecase": true}
+{"pattern": "\\bhọc\\s+bỗng\\b", "replace": "học bổng", "ignorecase": true}
+{"pattern": "\\bđiểm\\s+rèn\\s+liện\\b", "replace": "điểm rèn luyện", "ignorecase": true}
+{"pattern": "\\bkhóa\\s+lận\\b", "replace": "khóa luận", "ignorecase": true}
+{"pattern": "\\bbão\\s+lưu\\b", "replace": "bảo lưu", "ignorecase": true}
+{"pattern": "\\bchuẩn\\s+đầu\\s+ga\\b", "replace": "chuẩn đầu ra", "ignorecase": true}
+{"pattern": "\\bngành\\s+lật\\b", "replace": "ngành Luật", "ignorecase": true}
+{"pattern": "\\bthực\\s+tập\\s+danh\\s+nghiệp\\b", "replace": "thực tập doanh nghiệp", "ignorecase": true}
+{"pattern": "\\bđiểm\\s+ép\\b", "replace": "điểm F", "ignorecase": true}
+{"pattern": "\\bhắt\\s*ét\\s*u\\b", "replace": "HSU", "ignorecase": true}
+{"pattern": "\\bhắt\\s*ét\\s*iu\\b", "replace": "HSU", "ignorecase": true}
+{"pattern": "\\bhát\\s*ét\\s*u\\b", "replace": "HSU", "ignorecase": true}
+{"pattern": "\\bgi\\s*pi\\s*ây\\b", "replace": "GPA", "ignorecase": true}
+{"pattern": "\\bgờ\\s*pê\\s*a\\b", "replace": "GPA", "ignorecase": true}
+{"pattern": "\\btô\\s*ích\\b", "replace": "TOEIC", "ignorecase": true}
+{"pattern": "\\bai\\s*eo(?:\\s*sờ)?\\b", "replace": "IELTS", "ignorecase": true}

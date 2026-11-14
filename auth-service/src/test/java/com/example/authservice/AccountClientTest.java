@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** AccountClient với một account-service giả chạy trên kênh gRPC in-process: kiểm tra ánh xạ mã lỗi gRPC. */
 class AccountClientTest {
-    static final AccountInfo BOB = AccountInfo.newBuilder().setId(1).setUsername("bob").setRole("EMPLOYEE")
+    static final AccountInfo BOB = AccountInfo.newBuilder().setId(1).setUsername("bob").setRole("USER")
             .setDepartmentId(2).setTokenVersion(3).setActive(true).setMustChangePassword(true).build();
 
     static final Credentials BOB_CREDENTIALS = Credentials.newBuilder().setAccount(BOB).setPasswordHash("$2a$hash").build();

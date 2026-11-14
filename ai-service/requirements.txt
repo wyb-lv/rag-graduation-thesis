@@ -1,6 +1,5 @@
 # torch: cai ban CUDA rieng theo https://pytorch.org/get-started/locally/ (da dung torch 2.14 + cu126)
-FlagEmbedding>=1.4.2   # BGEM3FlagModel (keo theo sentence-transformers, repo nay khong import truc tiep)
-transformers>=4.57     # jina-reranker-v3.5 qua jina_reranker_modeling.py (class Qwen3); da chay voi transformers 5.17
+sentence-transformers>=5  # SentenceTransformer BGE-M3 dense + CrossEncoder reranker (encoders.py), keo theo transformers; nhanh lexical la BM25 tu viet (bm25.py), khong can them thu vien
 huggingface_hub        # snapshot_download trong encoders.py
 qdrant-client>=1.19.1
 groq>=1.7.0
@@ -8,7 +7,6 @@ fastapi>=0.115
 uvicorn>=0.34
 python-dotenv>=1.2
 numpy
-pymupdf                # export_model.py
 scipy                  # encoders.py nap BLAS truoc torch de tranh crash tren Windows
 scikit-learn           # nhu tren
 pytest>=8
@@ -22,3 +20,6 @@ pymongo>=4.13              # AsyncMongoClient (app/conversations.py): luu tru ho
 # Voice STT & TTS
 python-multipart>=0.0.9    # Bắt buộc để FastAPI nhận file upload (UploadFile) ở /stt
 edge-tts>=6.1.12            # Thư viện tổng hợp giọng đọc Neural tiếng Việt
+# OCR (app/ocr): thay OCR cu cua file-service; trang scan gui sang container PaddleOCR-VL (httpx o tren)
+pymupdf                # doc lop chu + bang cua PDF, tach trang scan (AGPL)
+python-docx            # doc DOCX

@@ -25,7 +25,8 @@ public class SecurityConfig {
                                 "/api/auth/logout",
                                 "/api/auth/refresh",
                                 "/error",
-                                "/actuator/**"
+                                "/actuator/**",
+                                "/v3/api-docs/**" // api-gateway lấy spec để gom vào Swagger UI
                         ).permitAll()
                         .anyRequest()
                         .authenticated())

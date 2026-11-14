@@ -9,6 +9,8 @@ import os
 
 from dotenv import load_dotenv
 
+from . import texts
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
@@ -20,13 +22,12 @@ def _env(name, default, cast=str):
 
 # ---- Model (tai mot lan moi tien trinh, xem encoders.py) ----
 EMBED_MODEL = "BAAI/bge-m3"
-# Reranker listwise nap qua transformers bang models/jina_reranker_modeling.py (ban sao da duyet, khong trust_remote_code).
-# Giay phep CC BY-NC 4.0 (phi thuong mai).
-RERANK_MODEL = "jinaai/jina-reranker-v3.5"
-# Weights/config/tokenizer lay dung revision nay, va models/jina_reranker_modeling.py la ban sao modeling.py o revision nay.
-# Doi revision = duyet lai modeling.py moi va vendor lai.
-RERANK_REVISION = "e8a93f33f0b22108f8c2364f8484ce3422552fbc"
-RERANK_DTYPE = "bfloat16"  # dtype goc cua checkpoint; tren CPU luon dung float32
+# Reranker CrossEncoder (sentence-transformers): mmBERT-base (ModernBERT, 308M) chung cat tu Qwen3-Reranker-4B, da ngon ngu
+# (co tieng Viet), giay phep Apache-2.0. Huan luyen o 384 token/cap, model card van dung max_length 512.
+RERANK_MODEL = "Horizon-Labs/multilingual-reranker-base"
+# Weights/config/tokenizer lay dung revision nay (de trong = ban moi nhat cua nhanh main; repo nay con dang duoc cap nhat).
+RERANK_REVISION = "7330f6d0b3f560af0c2b9a63820ea299a45fd91b"
+RERANK_DTYPE = "float16"  # tren CPU luon dung float32
 USE_FP16 = True  # chi cho BGE-M3
 # Thiet bi: "cuda:0", "cpu"... None = tu chon (cuda:0 neu co GPU, khong thi cpu).
 EMBED_DEVICE = None
@@ -36,10 +37,9 @@ RERANK_DEVICE = None
 RERANK_CPU_ON_OOM = False
 EMBED_BATCH_SIZE = 16
 EMBED_MAX_LENGTH = 512
-# Reranker listwise: cau hoi + ca danh sach doan vao MOT prompt (Jina: toi da 64 doan) nen "batch" la so doan cham
-# chung. Nhieu hon (hoac khi OOM) thi chia nhom; diem giua cac nhom khong cung ngu canh nen chi so sanh gan dung.
-RERANK_BATCH_SIZE = 64
-RERANK_MAX_LENGTH = 512  # token toi da moi doan (cat bot), de vua VRAM 4GB
+# So cap (cau hoi, doan) cham trong mot luot chay model; khi OOM thi chia doi. Moi cap cham doc lap nen batch khong doi diem.
+RERANK_BATCH_SIZE = 16
+RERANK_MAX_LENGTH = 512  # token toi da cua ca cap (cau hoi + doan), phan thua bi cat; de vua VRAM 4GB
 
 # Model luon duoc nap + chay thu 1 lan ngay khi server khoi dong (thread nen), de cau hoi dau tien khong phai cho ~16s.
 # request /ask den luc dang warm-up doi toi da chung nay roi moi chay tiep (warm-up ket thuc som hon thi di ngay). Phai du cho lan tai model dau tien
@@ -51,12 +51,12 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 # dense (BGE-M3) + bm25. Collection `quy_dinh_hybrid` cu khong bi dong toi: chep sang day bang
 # `python -m scripts.migrate_add_bm25` (khong can GPU, dense chep nguyen, bm25 tinh tu payload `text`).
 QDRANT_COLLECTION = "quy_dinh_hybrid_v2"
-# Collection dense-only cu: chi doc cau hinh HNSW tu day, khong bao gio ghi/xoa.
+# Collection dense-only cu: app khong con doc hay ghi; chi tests/test_qdrant_hybrid.py kiem tra no khong bi dong toi.
 QDRANT_LEGACY_COLLECTION = "paragraphs"
 DENSE_VECTOR_NAME = "dense"
 BM25_VECTOR_NAME = "bm25"
 EMBED_DIM = 1024
-# Chi dung khi khong doc duoc collection cu: cung cau hinh da benchmark truoc day.
+# Cau hinh HNSW cua collection moi (qdrant_setup.create_collection), da benchmark truoc day.
 HNSW_M = 32
 HNSW_EF_CONSTRUCT = 200
 HNSW_EF = 128  # efSearch: lon hon -> recall cao hon, cham hon
@@ -83,7 +83,7 @@ TOP_K_RERANK = 5  # so doan dua vao ngu canh LLM
 # Ten nhanh -> ten vector trong collection Qdrant
 HYBRID_LEG_VECTORS = {"dense": DENSE_VECTOR_NAME, "bm25": BM25_VECTOR_NAME}
 
-# Cac nhanh cua pipeline hybrid (luon roi rerank bang jina-reranker): moi nhanh cua moi cau (cau goc va cau viet lai) la mot danh sach,
+# Cac nhanh cua pipeline hybrid (luon roi rerank bang CrossEncoder): moi nhanh cua moi cau (cau goc va cau viet lai) la mot danh sach,
 # tat ca duoc hop nhat bang MOT lan RRF phia Qdrant (gop trung theo id).
 HYBRID_LEGS = ("dense", "bm25")
 
@@ -96,13 +96,15 @@ BM25_B = 0.75
 # do dai chunk / gia tri nay, nen doi o day thi phai nap lai bm25: scripts/migrate_add_bm25.py do lai kho va in gia tri moi.
 BM25_AVG_LEN = 370.13
 
-# Diem rerank (cosine cua jina, -1..1) toi thieu de doan van duoc coi la lien quan. Dat -1 de tat.
-# Do lai 2026-10 tren kho 1297 chunk / 77 van ban (10 cau trong pham vi, 9 cau lac de): cau hoi NGAN ("Hoc phi bao nhieu?")
-# bi reranker nen diem xuong, doan dung chi 0.01-0.06 nen nguong 0.1 cat con 0-1 doan va LLM tra "khong chua thong tin";
-# them ten truong vao cau hoi chi la doc them chu (diem len, nhung xep hang lai ve doan chung chung, va cau lac de cung vuot
-# nguong) nen KHONG la cach sua. Cau lac de cao nhat -0.032, doan tot nhat cua cau trong pham vi >= 0.2 -> 0.0 giu du doan
-# ma van chan cau lac de. Doi model/corpus thi do lai (scripts/calibrate_rerank.py).
-RERANK_MIN_SCORE = 0.0
+# Diem rerank (sigmoid cua CrossEncoder, 0..1) toi thieu de doan van duoc coi la lien quan. Dat 0 de tat.
+# Do lai 2026-11-11 voi multilingual-reranker-base tren kho 1319 chunk (27 cau trong pham vi, 10 cau lac de): hai nhom tach duoc.
+# Doan tot nhat cua cau trong pham vi >= 0.327 (cau ngan "Hoc phi bao nhieu?" ~0.94); cau lac de cao nhat 0.296 ("Luong giang vien
+# truong Hoa Sen", gan chu de), con lai <= 0.142. Nguong 0.2 giu 27/27 cau dung va chan 9/10 cau lac de; 0.3 chan du 10/10 nhung chi
+# cach diem thap nhat cua cau dung 0.03 tren mot bo cau hoi nho. Tra "khong co thong tin" cho cau dung te hon de lot mot cau lac de
+# (router phia truoc va prompt tra loi van tu choi duoc). Doi model/corpus thi do lai (scripts/calibrate_rerank.py).
+# 2026-11-12: find_hits cham CA HAI cau (goc + viet lai), diem trung binh. Do lai 46 cau voi cau viet lai that: 27/27 trong pham vi, 9/10 lac de
+# (nhu cu), nhom tach tot hon (trong pham vi thap nhat 0.394, lac de cao nhat 0.334; chi cham cau goc: 0.327 / 0.283), nen giu 0.2.
+RERANK_MIN_SCORE = 0.2
 
 # ---- Guard (guard.py): quet doan trich, prompt co rao + canary, guard dau ra; cau tra loi co dinh (small_talk.py) cho router ----
 GUARD_MAX_QUESTION_CHARS = 1000
@@ -110,33 +112,25 @@ GUARD_MAX_QUESTION_CHARS = 1000
 # tien trinh, nen cache dia cua Groq van trung). Dat tay neu muon doi canary ma khong sua prompt.
 GUARD_CANARY = ""
 
-# Cau tra loi co dinh. Giong giong dieu cua SYSTEM_PROMPT; khong nhac ten model / nha cung cap.
-GUARD_REFUSAL_ANSWER = (
-    "Tôi không thể thực hiện yêu cầu này. Bạn có thể hỏi tôi về quy chế, quy định, thông báo hoặc biểu mẫu "
-    "của Trường Đại học Hoa Sen."
-)
-_ABOUT = (
-    "Tôi là trợ lý tra cứu quy định của Trường Đại học Hoa Sen. Tôi tìm quy chế, quy định, thông báo, biểu mẫu và "
-    "hướng dẫn trong các kho văn bản của trường, trả lời kèm trích dẫn (tên văn bản, Điều, Khoản) và nói rõ khi "
-    "các văn bản không chứa câu trả lời. Với nội dung nằm ngoài các văn bản, bạn vui lòng liên hệ phòng, ban phụ "
-    "trách."
-)
-GUARD_REPLY_GREETING = f"Xin chào! {_ABOUT} Bạn muốn tra cứu nội dung gì?"
-GUARD_REPLY_CAPABILITY = f"{_ABOUT} Bạn cứ đặt câu hỏi về quy định nhé."
-GUARD_REPLY_META = (
-    "Tôi là trợ lý tra cứu quy định của Trường Đại học Hoa Sen và không chia sẻ thông tin cấu hình nội bộ. "
-    "Bạn có thể hỏi tôi về quy chế, quy định, thông báo hoặc biểu mẫu của trường."
-)
-GUARD_REPLY_THANKS = "Không có gì! Bạn cần tra cứu thêm quy định nào cứ hỏi nhé."
-GUARD_REPLY_GOODBYE = "Tạm biệt! Khi cần tra cứu quy định, bạn cứ quay lại nhé."
+# Cau tra loi co dinh (app/texts/answers.json; {ABOUT} duoc thay bang mo ta tro ly). Giong giong dieu cua SYSTEM_PROMPT; khong nhac ten model / nha cung cap.
+_ANSWERS = texts.read_json("answers.json")
 
-OFF_TOPIC_ANSWER = (
-    "Tôi chỉ hỗ trợ tra cứu quy chế, quy định, thông báo, biểu mẫu và hướng dẫn của Trường Đại học Hoa Sen. "
-    "Bạn vui lòng đặt lại câu hỏi theo một chủ đề quy định của trường nhé."
-)
-CLARIFY_ANSWER_TOPIC = "Bạn muốn hỏi về quy định hoặc chủ đề nào của trường (ví dụ học bổng, học phí, đăng ký học phần)?"
-CLARIFY_ANSWER_AUDIENCE = "Bạn là sinh viên khóa nào hoặc thuộc chương trình đào tạo nào để tôi tra cứu đúng quy định áp dụng?"
-CLARIFY_ANSWER_TIME = "Bạn muốn hỏi cho học kỳ hoặc năm học nào?"
+
+def _answer(key):
+    return _ANSWERS[key].replace("{ABOUT}", _ANSWERS["ABOUT"])
+
+
+NO_RESULT_ANSWER = _answer("NO_RESULT_ANSWER")
+GUARD_REFUSAL_ANSWER = _answer("GUARD_REFUSAL_ANSWER")
+GUARD_REPLY_GREETING = _answer("GUARD_REPLY_GREETING")
+GUARD_REPLY_CAPABILITY = _answer("GUARD_REPLY_CAPABILITY")
+GUARD_REPLY_META = _answer("GUARD_REPLY_META")
+GUARD_REPLY_THANKS = _answer("GUARD_REPLY_THANKS")
+GUARD_REPLY_GOODBYE = _answer("GUARD_REPLY_GOODBYE")
+OFF_TOPIC_ANSWER = _answer("OFF_TOPIC_ANSWER")
+CLARIFY_ANSWER_TOPIC = _answer("CLARIFY_ANSWER_TOPIC")
+CLARIFY_ANSWER_AUDIENCE = _answer("CLARIFY_ANSWER_AUDIENCE")
+CLARIFY_ANSWER_TIME = _answer("CLARIFY_ANSWER_TIME")
 
 # ---- Router LLM (router_llm.py): Gemini (REST generateContent) tu suy luan chao hoi / tan cong / ngoai pham vi / hoi lai / RAG, khong con
 # luat tu khoa nao. Luon bat; loi (timeout, quota, thieu GEMINI_API_KEY / GEMINI_MODEL) thi cau hoi di thang vao RAG ----
@@ -238,19 +232,19 @@ QUERY_REWRITE_TIMEOUT_S = _env("QUERY_REWRITE_TIMEOUT_S", 6.0, float)  # cau hoi
 # ---- OCR (app/ocr): consumer file-service.ocr.jobs. PDF co chu hien thi va DOCX doc thang (khong the sai chinh ta); chi trang scan / anh moi qua PaddleOCR-VL-1.6 ----
 # Pipeline `paddleocr[doc-parser]` (PP-DocLayoutV3 + VLM 0.9B) chay o container chinh thuc `paddleocr-vl-api` (docker-compose.yml)
 OCR_VL_URL = os.environ.get("OCR_VL_URL", "http://localhost:8080").rstrip("/")
+# Token chung voi file-service cho /internal/** (header X-Internal-Token): ai-service bao ket qua OCR bang no. Khong bao gio log.
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
 OCR_VL_TIMEOUT_S = _env("OCR_VL_TIMEOUT_S", 1800.0, float)  # toi da cho MOT lo trang; service doc cham theo so trang va GPU
 OCR_PAGES_PER_REQUEST = _env("OCR_PAGES_PER_REQUEST", 8, int)  # so trang scan gui trong mot request (giu request / thoi gian cho vua phai)
 OCR_SCAN_IMAGE_COVER = _env("OCR_SCAN_IMAGE_COVER", 0.5, float)  # trang co anh phu tu ti le nay tro len coi la scan, bo qua lop chu
 # Nhan khoi layout khong dua vao Markdown (so trang, dau / chan trang lap lai o moi trang); mac dinh cua PaddleOCR-VL bo them `footnote`
-OCR_IGNORE_LABELS = _env("OCR_IGNORE_LABELS", ["number", "header", "header_image", "footer", "footer_image", "aside_text"],
+# `number` KHONG nam trong danh sach nay: layout gan nhan do cho ca gia tri that ("Tong so tin chi tich luy: 120"), loc theo nhan la mat so.
+# paddle_vl chi bo so trang that: khoi `number` nam trong OCR_PAGE_NUMBER_MARGIN (ti le chieu cao) o dau / cuoi trang va khong chung hang voi khoi nao khac.
+OCR_IGNORE_LABELS = _env("OCR_IGNORE_LABELS", ["header", "header_image", "footer", "footer_image", "aside_text"],
                           lambda raw: [x.strip() for x in raw.split(",") if x.strip()])
+OCR_PAGE_NUMBER_MARGIN = _env("OCR_PAGE_NUMBER_MARGIN", 0.1, float)
 
-# Thêm vào ngay dưới dòng MAX_AUDIO_BYTES trong ai-service/app/config.py:
 CALL_GREETING_TEXT = _env(
     "CALL_GREETING_TEXT",
     "Xin chào! Mình là trợ lý học vụ Đại học Hoa Sen. Bạn có câu hỏi nào cần giải đáp không?",
-)
-CALL_NO_SPEECH_TEXT = _env(
-    "CALL_NO_SPEECH_TEXT",
-    "Mình chưa nghe rõ câu hỏi, bạn vui lòng nói lại giúp mình nhé.",
 )

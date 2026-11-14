@@ -52,7 +52,7 @@ class AuthFlowIntegrationTest {
     @BeforeEach
     void setUp() {
         refreshTokens.deleteAll();
-        bob.set(AccountInfo.newBuilder().setId(7).setUsername("bob").setRole("EMPLOYEE").setDepartmentId(2)
+        bob.set(AccountInfo.newBuilder().setId(7).setUsername("bob").setRole("USER").setDepartmentId(2)
                 .setActive(true).setMustChangePassword(true).build());
         when(accounts.credentials(any())).thenReturn(Optional.empty());
         when(accounts.credentials("bob")).thenAnswer(i ->
@@ -111,7 +111,7 @@ class AuthFlowIntegrationTest {
         assertThat(v.getIsValid()).isTrue();
         assertThat(v.getUserId()).isEqualTo(7);
         assertThat(v.getUsername()).isEqualTo("bob");
-        assertThat(v.getRole()).isEqualTo("EMPLOYEE");
+        assertThat(v.getRole()).isEqualTo("USER");
         assertThat(v.getDepartmentId()).isEqualTo(2);
         assertThat(refreshTokens.count()).isEqualTo(1);
     }

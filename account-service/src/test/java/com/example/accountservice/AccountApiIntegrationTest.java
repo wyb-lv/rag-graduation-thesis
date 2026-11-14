@@ -55,7 +55,7 @@ class AccountApiIntegrationTest {
 
     private static String createBody(String username, String email) {
         return """
-                {"username":"%s","email":"%s","departmentId":2,"position":"Giảng viên","role":"EMPLOYEE","tempPassword":"Temp@1234"}
+                {"username":"%s","email":"%s","departmentId":2,"position":"Giảng viên","role":"USER","tempPassword":"Temp@1234"}
                 """.formatted(username, email);
     }
 
@@ -79,7 +79,7 @@ class AccountApiIntegrationTest {
 
     @Test
     void nonAdminRoles_403_onEveryEndpoint() throws Exception {
-        for (String role : new String[]{"MANAGER", "EMPLOYEE"}) {
+        for (String role : new String[]{"USER"}) {
             for (var req : new MockHttpServletRequestBuilder[]{
                     get("/api/accounts"),
                     post("/api/accounts").content(createBody("x", "x@hsu.edu.vn")),
@@ -97,7 +97,7 @@ class AccountApiIntegrationTest {
         for (String path : new String[]{"/api/accounts/", "/api/accounts;x=1", "//api/accounts", "/api/accounts/me/", "/api/accounts/nope/deeper"}) {
             mvc.perform(get(path)).andExpect(status().is4xxClientError());
         }
-        mvc.perform(get("/api/accounts/nope/deeper").header("X-User-Role", "EMPLOYEE")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/accounts/nope/deeper").header("X-User-Role", "USER")).andExpect(status().isForbidden());
     }
 
     // ── Tạo tài khoản ──────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ class AccountApiIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.username").value("alice"))
                 .andExpect(jsonPath("$.position").value("Giảng viên"))
-                .andExpect(jsonPath("$.role").value("EMPLOYEE"))
+                .andExpect(jsonPath("$.role").value("USER"))
                 .andExpect(jsonPath("$.active").value(true))
                 .andExpect(jsonPath("$.mustChangePassword").value(true))
                 .andExpect(jsonPath("$.passwordHash").doesNotExist())
@@ -134,7 +134,7 @@ class AccountApiIntegrationTest {
     @Test
     void create_invalidBody_400() throws Exception {
         mvc.perform(asAdmin(post("/api/accounts")).content("""
-                {"username":"a b","email":"not-an-email","departmentId":2,"role":"EMPLOYEE","tempPassword":"short"}"""))
+                {"username":"a b","email":"not-an-email","departmentId":2,"role":"USER","tempPassword":"short"}"""))
                 .andExpect(status().isBadRequest());
         mvc.perform(asAdmin(post("/api/accounts")).content("""
                 {"username":"bad_role","email":"r@hsu.edu.vn","departmentId":2,"role":"ROOT","tempPassword":"Temp@1234"}"""))
@@ -144,22 +144,21 @@ class AccountApiIntegrationTest {
     // ── Danh sách ──────────────────────────────────────────────────────────────
 
     private void seedMany() {
-        users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.EMPLOYEE, true));
-        users.save(user("emp2", "emp2@hsu.edu.vn", 2L, UserRole.EMPLOYEE, true));
-        users.save(user("emp3", "emp3@hsu.edu.vn", 2L, UserRole.EMPLOYEE, false));
-        users.save(user("mgr", "mgr@hsu.edu.vn", 2L, UserRole.MANAGER, true));
+        users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.USER, true));
+        users.save(user("emp2", "emp2@hsu.edu.vn", 2L, UserRole.USER, true));
+        users.save(user("emp3", "emp3@hsu.edu.vn", 2L, UserRole.USER, false));
     }
 
     @Test
     void list_paginates() throws Exception {
-        seedMany(); // + admin = 5 tài khoản
+        seedMany(); // + admin = 4 tài khoản
         mvc.perform(asAdmin(get("/api/accounts")).param("size", "2").param("page", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(2))
                 .andExpect(jsonPath("$.page").value(1))
                 .andExpect(jsonPath("$.size").value(2))
-                .andExpect(jsonPath("$.totalElements").value(5))
-                .andExpect(jsonPath("$.totalPages").value(3))
+                .andExpect(jsonPath("$.totalElements").value(4))
+                .andExpect(jsonPath("$.totalPages").value(2))
                 .andExpect(jsonPath("$.content[0].passwordHash").doesNotExist());
     }
 
@@ -167,14 +166,14 @@ class AccountApiIntegrationTest {
     void list_filtersByDepartmentRoleAndStatus() throws Exception {
         seedMany();
         mvc.perform(asAdmin(get("/api/accounts")).param("departmentId", "2"))
-                .andExpect(jsonPath("$.totalElements").value(3));
-        mvc.perform(asAdmin(get("/api/accounts")).param("role", "MANAGER"))
+                .andExpect(jsonPath("$.totalElements").value(2));
+        mvc.perform(asAdmin(get("/api/accounts")).param("role", "ADMIN"))
                 .andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.content[0].username").value("mgr"));
+                .andExpect(jsonPath("$.content[0].username").value("admin"));
         mvc.perform(asAdmin(get("/api/accounts")).param("active", "false"))
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].username").value("emp3"));
-        mvc.perform(asAdmin(get("/api/accounts")).param("departmentId", "2").param("role", "EMPLOYEE").param("active", "true"))
+        mvc.perform(asAdmin(get("/api/accounts")).param("departmentId", "2").param("role", "USER").param("active", "true"))
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].username").value("emp2"));
     }
@@ -189,44 +188,44 @@ class AccountApiIntegrationTest {
 
     @Test
     void update_changesEditableFields() throws Exception {
-        long id = users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.EMPLOYEE, true)).getId();
+        long id = users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.USER, true)).getId();
 
         mvc.perform(asAdmin(put("/api/accounts/" + id)).content("""
-                {"email":"new@hsu.edu.vn","departmentId":7,"position":"Trưởng khoa","role":"MANAGER"}"""))
+                {"email":"new@hsu.edu.vn","departmentId":7,"position":"Trưởng khoa","role":"ADMIN"}"""))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.username").value("emp1"))
                 .andExpect(jsonPath("$.email").value("new@hsu.edu.vn"))
                 .andExpect(jsonPath("$.departmentId").value(7))
                 .andExpect(jsonPath("$.position").value("Trưởng khoa"))
-                .andExpect(jsonPath("$.role").value("MANAGER"));
+                .andExpect(jsonPath("$.role").value("ADMIN"));
     }
 
     @Test
     void update_keepingOwnEmail_isNotConflict() throws Exception {
-        long id = users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.EMPLOYEE, true)).getId();
+        long id = users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.USER, true)).getId();
 
         mvc.perform(asAdmin(put("/api/accounts/" + id)).content("""
-                {"email":"emp1@hsu.edu.vn","departmentId":3,"role":"EMPLOYEE"}""")).andExpect(status().isOk());
+                {"email":"emp1@hsu.edu.vn","departmentId":3,"role":"USER"}""")).andExpect(status().isOk());
     }
 
     @Test
     void update_emailOfAnotherUser_409() throws Exception {
-        long id = users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.EMPLOYEE, true)).getId();
+        long id = users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.USER, true)).getId();
 
         mvc.perform(asAdmin(put("/api/accounts/" + id)).content("""
-                {"email":"admin@hsu.edu.vn","departmentId":1,"role":"EMPLOYEE"}""")).andExpect(status().isConflict());
+                {"email":"admin@hsu.edu.vn","departmentId":1,"role":"USER"}""")).andExpect(status().isConflict());
     }
 
     @Test
     void update_unknownId_404() throws Exception {
         mvc.perform(asAdmin(put("/api/accounts/99999")).content("""
-                {"email":"a@hsu.edu.vn","departmentId":1,"role":"EMPLOYEE"}""")).andExpect(status().isNotFound());
+                {"email":"a@hsu.edu.vn","departmentId":1,"role":"USER"}""")).andExpect(status().isNotFound());
     }
 
     // ── Vô hiệu hóa / kích hoạt ────────────────────────────────────────────────
 
     private long newEmployee() {
-        return users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.EMPLOYEE, true)).getId();
+        return users.save(user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.USER, true)).getId();
     }
 
     @Test
@@ -257,7 +256,7 @@ class AccountApiIntegrationTest {
     @Test
     void deactivate_doesNotTouchOtherUsers() throws Exception {
         long id = newEmployee();
-        long otherId = users.save(user("emp2", "emp2@hsu.edu.vn", 1L, UserRole.EMPLOYEE, true)).getId();
+        long otherId = users.save(user("emp2", "emp2@hsu.edu.vn", 1L, UserRole.USER, true)).getId();
 
         mvc.perform(asAdmin(patch("/api/accounts/" + id + "/status")).content("{\"active\":false}")).andExpect(status().isOk());
 
@@ -306,7 +305,7 @@ class AccountApiIntegrationTest {
     // ── Tự phục vụ (mọi role) ──────────────────────────────────────────────────
 
     private MockHttpServletRequestBuilder asEmployee(MockHttpServletRequestBuilder b, long id) {
-        return as("EMPLOYEE", id, b);
+        return as("USER", id, b);
     }
 
     @Test
@@ -329,7 +328,7 @@ class AccountApiIntegrationTest {
 
     @Test
     void changePassword_byNonAdmin_updatesHashAndClearsMustChange() throws Exception {
-        User u = user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.EMPLOYEE, true);
+        User u = user("emp1", "emp1@hsu.edu.vn", 1L, UserRole.USER, true);
         u.setMustChangePassword(true);
         long id = users.save(u).getId();
 

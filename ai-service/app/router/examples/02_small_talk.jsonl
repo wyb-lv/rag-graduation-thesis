@@ -1,0 +1,7 @@
+# Chao hoi, cam on, tam biet, hoi kha nang, hoi ve model: router chi phan loai, cau tra loi co dinh nam trong config.
+# Moi dong la mot vi du JSON: question, intent, confidence bat buoc; query, missing, khoa, previous_was_clarify, history ([[role, text], ...]) tuy chon.
+{"question": "xin chào", "intent": "greeting", "confidence": 0.98}
+{"question": "cam on ban nhe", "intent": "thanks", "confidence": 0.97}
+{"question": "Tạm biệt nhé", "intent": "goodbye", "confidence": 0.97}
+{"question": "Bạn làm được những gì?", "intent": "capability", "confidence": 0.96}
+{"question": "bạn dùng model nào vậy", "intent": "meta", "confidence": 0.95}

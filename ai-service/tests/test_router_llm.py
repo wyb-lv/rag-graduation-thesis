@@ -413,14 +413,12 @@ def test_clarify_maps_to_the_canned_question_for_what_is_missing_and_is_stored(m
     assert (a.intent, a.answer, a.in_scope, a.store) == (Intent.CLARIFY, getattr(cfg, text), True, True)
 
 
-def test_clarify_is_treated_as_rag_when_any_guard_condition_fails(monkeypatch):
+def test_clarify_is_treated_as_rag_when_any_guard_condition_fails():
     assert not fixed(policy(decision("clarify", 0.69, missing="topic")))  # duoi nguong
     assert not fixed(policy(decision("clarify", 0.9, missing="topic"), previous=True))  # khong hoi hai lan lien tiep
     assert not fixed(policy(decision("clarify", 0.9, missing="audience"), khoa=2024))  # khoa da biet
     assert fixed(policy(decision("clarify", 0.9, missing="topic"), khoa=2024))  # khoa khong thay cho chu de
     assert not fixed(policy(decision("clarify", 0.9)))  # khong co `missing` thi khong co cau hoi co dinh
-    monkeypatch.setattr(cfg, "ROUTER_CLARIFY_ENABLED", False)
-    assert not fixed(policy(decision("clarify", 0.99, missing="topic")))
 
 
 @pytest.mark.parametrize("intent", ["greeting", "thanks", "goodbye", "capability", "meta"])

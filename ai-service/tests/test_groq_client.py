@@ -55,7 +55,6 @@ def settings(monkeypatch, tmp_path):
     monkeypatch.setattr(cfg, "GROQ_QWEN_MODEL", "qwen/test-model")
     monkeypatch.setattr(cfg, "GROQ_API_KEY", "key")
     monkeypatch.setattr(cfg, "GROQ_REASONING_EFFORT", "none")
-    monkeypatch.setattr(cfg, "GROQ_CACHE_ENABLED", True)
     monkeypatch.setattr(cfg, "GROQ_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(cfg, "GROQ_MAX_RETRIES", 3)
     monkeypatch.setattr(cfg, "GROQ_BACKOFF_BASE", 2)
@@ -176,14 +175,6 @@ def test_cache_key_depends_on_model_and_prompt(monkeypatch):
     assert groq_client.cache_key("m1", MESSAGES[:1]) != base
     monkeypatch.setattr(cfg, "GROQ_REASONING_EFFORT", "high")
     assert groq_client.cache_key("m1", MESSAGES) != base
-
-
-def test_cache_can_be_disabled(monkeypatch):
-    monkeypatch.setattr(cfg, "GROQ_CACHE_ENABLED", False)
-    limiter, clock = make_limiter()
-    client = FakeClient([Resp("a"), Resp("b")])
-    assert groq_client.chat(MESSAGES, client=client, limiter=limiter, sleep=clock.sleep) == "a"
-    assert groq_client.chat(MESSAGES, client=client, limiter=limiter, sleep=clock.sleep) == "b"
 
 
 def test_rate_limiter_enforces_rpm():

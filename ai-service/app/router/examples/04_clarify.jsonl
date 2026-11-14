@@ -1,0 +1,11 @@
+# Thieu thong tin thi hoi lai theo `missing` (topic / audience / time); da biet khoa hoac nguoi dung vua tra loi cau hoi lai thi di tiep rag.
+# Moi dong la mot vi du JSON: question, intent, confidence bat buoc; query, missing, khoa, previous_was_clarify, history ([[role, text], ...]) tuy chon.
+{"question": "điều kiện là gì?", "intent": "clarify", "confidence": 0.95, "missing": "topic"}
+{"question": "còn cái đó thì sao?", "intent": "clarify", "confidence": 0.93, "missing": "topic"}
+{"question": "duoc khong?", "intent": "clarify", "confidence": 0.9, "missing": "topic"}
+{"question": "Em có được xét học bổng không?", "intent": "clarify", "confidence": 0.85, "missing": "audience"}
+{"question": "Em có được xét học bổng không?", "intent": "rag", "confidence": 0.9, "query": "Em có được xét học bổng không?", "khoa": 2024}
+{"question": "Ngày thi kết thúc học phần là khi nào?", "intent": "clarify", "confidence": 0.8, "missing": "time"}
+{"question": "học bổng", "intent": "rag", "confidence": 0.92, "query": "Điều kiện xét học bổng là gì?", "previous_was_clarify": true, "history": [["user", "điều kiện là gì?"], ["assistant", "{CLARIFY_ANSWER_TOPIC}"]]}
+{"question": "khoa 2023", "intent": "rag", "confidence": 0.92, "query": "Sinh viên khóa 2023 có được xét học bổng không?", "previous_was_clarify": true, "history": [["user", "Em có được xét học bổng không?"], ["assistant", "{CLARIFY_ANSWER_AUDIENCE}"]]}
+{"question": "không biết nữa", "intent": "rag", "confidence": 0.55, "query": "Điều kiện là gì?", "previous_was_clarify": true, "history": [["user", "điều kiện là gì?"], ["assistant", "{CLARIFY_ANSWER_TOPIC}"]]}

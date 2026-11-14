@@ -10,6 +10,7 @@ import argparse
 import sys
 
 from app.rag import query_model as qm
+from app.rag import query_rewrite
 
 # (câu hỏi, từ khóa chữ thường phải xuất hiện trong tên tài liệu của đoạn đúng)
 IN_SCOPE = [
@@ -57,7 +58,8 @@ OUT_OF_SCOPE = [
 
 
 def top_score(question, khoa):
-    hits = qm.rerank(question, qm.retrieve(question, "hybrid", khoa=khoa))
+    alt = query_rewrite.rewrite(question)  # nhu find_hits: tim va cham ca cau goc lan cau viet lai (moi cau ton mot lan goi Groq)
+    hits = qm.rerank(question, qm.retrieve(question, khoa=khoa, alt_question=alt), alt_question=alt)
     return hits
 
 
@@ -76,23 +78,23 @@ def main():
         hits = top_score(q, khoa)
         ok = any(kw in (h["source"] or "").lower() for h in hits)
         inside.append((hits[0]["rerank_score"], ok))
-        print(f"{hits[0]['rerank_score']:7.3f} {'OK ' if ok else 'SAI'} {q[:55]:55} -> {(hits[0]['source'] or '')[:50]}")
+        print(f"{hits[0]['rerank_score']:9.5f} {'OK ' if ok else 'SAI'} {q[:55]:55} -> {(hits[0]['source'] or '')[:50]}")
     print("\n== Ngoài phạm vi")
     for q in OUT_OF_SCOPE:
         hits = top_score(q, khoa)
         outside.append(hits[0]["rerank_score"])
-        print(f"{hits[0]['rerank_score']:7.3f}     {q[:55]:55} -> {(hits[0]['source'] or '')[:50]}")
+        print(f"{hits[0]['rerank_score']:9.5f}     {q[:55]:55} -> {(hits[0]['source'] or '')[:50]}")
 
     good = [s for s, ok in inside if ok]
-    print(f"\nTrong phạm vi (đoạn đúng): {len(good)}/{len(inside)} câu, điểm thấp nhất {min(good):.3f}")
-    print(f"Ngoài phạm vi: cao nhất {max(outside):.3f}")
+    print(f"\nTrong phạm vi (đoạn đúng): {len(good)}/{len(inside)} câu, điểm thấp nhất {min(good):.5f}")
+    print(f"Ngoài phạm vi: cao nhất {max(outside):.5f}")
     print("\nngưỡng | câu trong phạm vi được trả lời | câu ngoài phạm vi bị chặn")
-    for t in (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4):
+    for t in (0.0, 0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5):  # thang sigmoid, diem model co the dung o ca 1e-4 lan 0.99
         kept = sum(s >= t for s, _ in inside)
         blocked = sum(s < t for s in outside)
-        print(f"{t:6.2f} | {kept:2d}/{len(inside)} | {blocked:2d}/{len(outside)}")
+        print(f"{t:6.3f} | {kept:2d}/{len(inside)} | {blocked:2d}/{len(outside)}")
     lo, hi = max(outside), min(good)
-    print(f"\nGợi ý: ngưỡng trong ({lo:.3f}, {hi:.3f})" + (f", điểm giữa {(lo + hi) / 2:.3f}" if lo < hi else " — hai nhóm chồng nhau, cần chọn đánh đổi"))
+    print(f"\nGợi ý: ngưỡng trong ({lo:.5f}, {hi:.5f})" + (f", điểm giữa {(lo + hi) / 2:.3f}" if lo < hi else " — hai nhóm chồng nhau, cần chọn đánh đổi"))
 
 
 if __name__ == "__main__":

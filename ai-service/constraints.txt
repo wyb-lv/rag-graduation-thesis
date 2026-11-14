@@ -1,13 +1,12 @@
 # Ghim dung version da chay on dinh o local (Python 3.13, torch 2.14.0+cu126) de build Docker lap lai duoc.
 # Dung cung requirements.txt: pip install -r requirements.txt -c constraints.txt
 torch==2.14.0
-transformers==5.17.0
+transformers==5.22.2
 tokenizers==0.23.2
 safetensors==0.8.0
 accelerate==1.15.0
 peft==0.21.2
-sentence-transformers==6.1.0
-FlagEmbedding==1.4.2
+sentence-transformers==6.2.0
 huggingface_hub==1.32.0
 qdrant-client==1.19.1
 groq==1.7.0
@@ -19,7 +18,6 @@ python-dotenv==1.2.3
 numpy==2.5.3
 scipy==1.18.1
 scikit-learn==1.9.1
-pymupdf==1.28.2
 pytest==8.4.2
 llama-index-core==0.14.25
 aiosqlite==0.22.1
@@ -28,3 +26,5 @@ greenlet==3.5.6
 pymongo==4.19.0
 dnspython==2.9.1
 edge-tts>=6.1.0
+pymupdf==1.28.2
+python-docx==1.2.0

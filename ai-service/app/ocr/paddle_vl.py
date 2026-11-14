@@ -38,9 +38,38 @@ def parse(data, pdf):
         raise BadDocument(_message(resp))
     try:
         results = resp.json()["result"]["layoutParsingResults"]
-        return [html_to_markdown(r["markdown"]["text"]).strip() for r in results]
+        return [html_to_markdown(_without_page_numbers(r["markdown"]["text"], r.get("prunedResult") or {})).strip() for r in results]
     except (ValueError, KeyError, TypeError) as e:
         raise OcrUnavailable("PaddleOCR-VL tra ket qua sai dinh dang") from e
+
+
+def _same_row(block, other):
+    """Hai khoi chung hang khi doan chieu doc chong nhau qua nua chieu cao khoi `block`."""
+    overlap = min(block["block_bbox"][3], other["block_bbox"][3]) - max(block["block_bbox"][1], other["block_bbox"][1])
+    return overlap > 0.5 * (block["block_bbox"][3] - block["block_bbox"][1])
+
+
+def _without_page_numbers(markdown, pruned):
+    """Layout gan nhan `number` cho ca so trang lan gia tri that, nen khong loc theo nhan. Chi bo khoi `number` nam o le tren / duoi trang
+    (OCR_PAGE_NUMBER_MARGIN) va khong chung hang voi khoi nao khac (khoi bi OCR_IGNORE_LABELS loai khong tinh: so ben canh chan trang van la so trang).
+    shortcut: go khoi bang cach tim doan van trung noi dung (dau trang: tu dau, cuoi trang: tu cuoi), khong dung toa do trong Markdown."""
+    blocks = pruned.get("parsing_res_list") or []
+    height = pruned.get("height") or 0
+    paragraphs = markdown.split("\n\n")
+    for block in blocks:
+        if block.get("block_label") != "number" or not height:
+            continue
+        top = block["block_bbox"][3] <= height * cfg.OCR_PAGE_NUMBER_MARGIN
+        bottom = block["block_bbox"][1] >= height * (1 - cfg.OCR_PAGE_NUMBER_MARGIN)
+        content = [o for o in blocks if o is not block and o.get("block_label") not in cfg.OCR_IGNORE_LABELS]
+        if not (top or bottom) or any(_same_row(block, o) for o in content):
+            continue
+        text = (block.get("block_content") or "").strip()
+        for i in (range(len(paragraphs)) if top else reversed(range(len(paragraphs)))):
+            if paragraphs[i].strip() == text:
+                del paragraphs[i]
+                break
+    return "\n\n".join(paragraphs)
 
 
 def _message(resp):

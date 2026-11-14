@@ -14,7 +14,7 @@ from app import qdrant_setup
 from app.models import encoders
 from app.rag import query_model as qm
 
-ALL_COMBOS = [c for n in (1, 2) for c in itertools.combinations(cfg.HYBRID_LEG_NAMES, n)]
+ALL_COMBOS = [c for n in (1, 2) for c in itertools.combinations(cfg.HYBRID_LEGS, n)]
 
 
 class FakeQdrant:
@@ -33,20 +33,24 @@ def stub(monkeypatch):
 
     def encode(texts, batch_size=None):
         state.encoded += 1
-        return np.ones((len(texts), 1024), "float32"), [state.lexical]
+        return np.ones((len(texts), 1024), "float32")
 
     monkeypatch.setattr(encoders, "encode_texts", encode)
+    monkeypatch.setattr(
+        qm.bm25, "bm25_query_vector",
+        lambda text: models.SparseVector(indices=[int(k) for k in state.lexical], values=list(state.lexical.values())),
+    )
     monkeypatch.setattr(qm, "get_qdrant", lambda: state.qdrant)
     return state
 
 
-def test_default_legs_are_dense_and_sparse():
-    assert cfg.HYBRID_LEGS == ("dense", "sparse")
+def test_default_legs_are_dense_and_bm25():
+    assert cfg.HYBRID_LEGS == ("dense", "bm25")
 
 
 def test_default_config_sends_the_expected_hybrid_request(stub, monkeypatch):
-    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("dense", "sparse"))
-    qm.retrieve("cau hoi", mode="hybrid", kho="K", reference_date=date(2025, 6, 1), khoa=2024)
+    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("dense", "bm25"))
+    qm.retrieve("cau hoi", kho="K", reference_date=date(2025, 6, 1), khoa=2024)
 
     flt = qm.build_filter("K", date(2025, 6, 1), 2024)
     ef = models.SearchParams(hnsw_ef=cfg.HNSW_EF)
@@ -56,7 +60,7 @@ def test_default_config_sends_the_expected_hybrid_request(stub, monkeypatch):
         prefetch=[
             models.Prefetch(query=[1.0] * 1024, using="dense", filter=flt, limit=20, params=ef),
             models.Prefetch(
-                query=models.SparseVector(indices=[10, 20], values=[0.5, 0.25]), using="sparse", filter=flt, limit=20
+                query=models.SparseVector(indices=[10, 20], values=[0.5, 0.25]), using="bm25", filter=flt, limit=20
             ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
@@ -65,27 +69,11 @@ def test_default_config_sends_the_expected_hybrid_request(stub, monkeypatch):
     )
 
 
-def test_dense_mode_and_empty_sparse_send_the_same_dense_request_as_before(stub):
-    stub.lexical = {}
-    qm.retrieve("cau hoi", mode="hybrid")
-    qm.retrieve("cau hoi", mode="dense")
-    flt = qm.build_filter()
-    expected = dict(
-        query=[1.0] * 1024,
-        using="dense",
-        query_filter=flt,
-        limit=20,
-        with_payload=True,
-        search_params=models.SearchParams(hnsw_ef=cfg.HNSW_EF),
-    )
-    assert [kw for _, kw in stub.qdrant.calls] == [expected, expected]
-
-
 @pytest.mark.parametrize("legs", ALL_COMBOS, ids=lambda legs: "+".join(legs))
 def test_the_same_filter_reaches_every_leg(stub, monkeypatch, legs):
     monkeypatch.setattr(cfg, "HYBRID_LEGS", legs)
     qm.retrieve(
-        "Điều 15 học bổng", mode="hybrid", kho="K", reference_date=date(2025, 6, 1), khoa=2024, loai_van_ban=["thong_bao"]
+        "Điều 15 học bổng", kho="K", reference_date=date(2025, 6, 1), khoa=2024, loai_van_ban=["thong_bao"]
     )
     flt = qm.build_filter("K", date(2025, 6, 1), 2024, ["thong_bao"])
     [(_, kwargs)] = stub.qdrant.calls
@@ -102,29 +90,23 @@ def test_the_same_filter_reaches_every_leg(stub, monkeypatch, legs):
 
 
 def test_leg_order_follows_config(stub, monkeypatch):
-    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("sparse", "dense"))
-    qm.retrieve("Điều 15", mode="hybrid")
-    assert [p.using for p in stub.qdrant.calls[0][1]["prefetch"]] == ["sparse", "dense"]
+    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("bm25", "dense"))
+    qm.retrieve("Điều 15")
+    assert [p.using for p in stub.qdrant.calls[0][1]["prefetch"]] == ["bm25", "dense"]
 
 
 def test_every_leg_empty_falls_back_to_dense(stub, monkeypatch):
-    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("sparse",))
+    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("bm25",))
     stub.lexical = {}  # khong co token sparse nao
-    qm.retrieve("?!...", mode="hybrid")
+    qm.retrieve("?!...")
     kwargs = stub.qdrant.calls[0][1]
     assert kwargs["using"] == "dense" and "prefetch" not in kwargs
-
-
-def test_dense_mode_ignores_hybrid_legs(stub, monkeypatch):
-    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("sparse",))
-    qm.retrieve("học bổng", mode="dense")
-    assert stub.qdrant.calls[0][1]["using"] == "dense"
 
 
 def test_unknown_leg_name_fails_loudly_instead_of_being_dropped(stub, monkeypatch):
     monkeypatch.setattr(cfg, "HYBRID_LEGS", ("dense", "lexical"))
     with pytest.raises(ValueError, match="lexical"):
-        qm.retrieve("học bổng", mode="hybrid")
+        qm.retrieve("học bổng")
     assert stub.qdrant.calls == []
 
 
@@ -147,7 +129,7 @@ def test_find_hits_and_ask_pass_loai_van_ban_down(stub, monkeypatch):
 
 # ── kiểm tra nhánh lúc khởi động ─────────────────────────────────────────────
 
-def fake_client(vectors=("dense",), sparse=("sparse",), exists=True):
+def fake_client(vectors=("dense",), sparse=("bm25",), exists=True):
     params = SimpleNamespace(
         vectors={name: object() for name in vectors}, sparse_vectors={name: object() for name in sparse}
     )
@@ -159,22 +141,22 @@ def fake_client(vectors=("dense",), sparse=("sparse",), exists=True):
 
 def test_missing_leg_raises_a_clear_error():
     with pytest.raises(RuntimeError) as err:
-        qdrant_setup.validate_legs(fake_client(sparse=()), "quy_dinh_hybrid", ("dense", "sparse"))
+        qdrant_setup.validate_legs(fake_client(sparse=()), "quy_dinh_hybrid", ("dense", "bm25"))
     message = str(err.value)
-    assert "sparse" in message and "quy_dinh_hybrid" in message
+    assert "bm25" in message and "quy_dinh_hybrid" in message
     assert "dense" not in message.split("thiếu vector cho nhánh")[1].split("(")[0]  # chỉ nêu nhánh thật sự thiếu
 
 
 def test_every_missing_leg_is_named():
     with pytest.raises(RuntimeError) as err:
-        qdrant_setup.validate_legs(fake_client(vectors=(), sparse=()), "c", ("dense", "sparse"))
-    assert "dense, sparse" in str(err.value)
+        qdrant_setup.validate_legs(fake_client(vectors=(), sparse=()), "c", ("dense", "bm25"))
+    assert "dense, bm25" in str(err.value)
 
 
 def test_present_legs_pass_and_are_logged(caplog):
     with caplog.at_level(logging.INFO, logger="uvicorn.error"):
-        qdrant_setup.validate_legs(fake_client(), "c", ("dense", "sparse"))
-    assert "dense, sparse" in caplog.text
+        qdrant_setup.validate_legs(fake_client(), "c", ("dense", "bm25"))
+    assert "dense, bm25" in caplog.text
 
 
 def test_unnamed_dense_vector_does_not_crash_validation():
@@ -188,7 +170,7 @@ def test_unnamed_dense_vector_does_not_crash_validation():
 
 def test_missing_collection_or_qdrant_down_does_not_block_startup(caplog):
     with caplog.at_level(logging.INFO, logger="uvicorn.error"):
-        qdrant_setup.validate_legs(fake_client(exists=False), "chua_co", ("dense", "sparse"))
+        qdrant_setup.validate_legs(fake_client(exists=False), "chua_co", ("dense", "bm25"))
     assert "chưa tồn tại" in caplog.text
 
     def down(name):
@@ -197,14 +179,13 @@ def test_missing_collection_or_qdrant_down_does_not_block_startup(caplog):
     client = fake_client()
     client.collection_exists = down
     with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
-        qdrant_setup.validate_legs(client, "c", ("dense", "sparse"))
+        qdrant_setup.validate_legs(client, "c", ("dense", "bm25"))
     assert "qdrant down" in caplog.text
 
 
 def test_server_does_not_start_when_a_configured_leg_is_missing(monkeypatch):
-    monkeypatch.setattr(cfg, "WARMUP", False)
-    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("dense", "sparse"))
+    monkeypatch.setattr(cfg, "HYBRID_LEGS", ("dense", "bm25"))
     monkeypatch.setattr(qm, "get_qdrant", lambda: fake_client(sparse=()))
-    with pytest.raises(RuntimeError, match="sparse"):
+    with pytest.raises(RuntimeError, match="bm25"):
         with TestClient(api.app):
             pass

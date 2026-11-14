@@ -44,7 +44,18 @@ export async function changePasswordApi(accessToken: string, currentPassword: st
   throw new Error(err.message || err.detail || `Đổi mật khẩu không thành công (${res.status})`)
 }
 
-/** Khóa của sinh viên (vd 2024), gửi kèm câu hỏi để chỉ lấy quy định áp dụng cho khóa đó. */
+/** Role trong access token. Chỉ để ẩn / hiện giao diện: quyền thật do api-gateway kiểm tra từng request. */
+export function getRole(token: string | null): string | undefined {
+  try {
+    const payload = token?.split('.')[1]
+    if (!payload) return undefined
+    const role = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))).role
+    return typeof role === 'string' ? role : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Khóa của sinh viên (vd 2024), gửi kèm câu hỏi để chỉ lấy quy định áp dụng cho khóa đó. */
 export function getKhoa(): number | undefined {
   const raw = localStorage.getItem('khoa')

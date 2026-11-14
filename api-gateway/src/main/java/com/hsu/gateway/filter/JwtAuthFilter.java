@@ -32,8 +32,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             "/api/auth/logout",
             "/api/ai/health",
             "/health",
-            "/actuator"
+            "/actuator",
+            // Swagger UI của gateway (trang, webjar và tài liệu OpenAPI), xem com.hsu.gateway.docs
+            "/swagger-ui",
+            "/webjars/",
+            "/v3/api-docs"
     );
+
+    /** Đường dẫn không cần token. */
+    public static boolean isPublic(String path) {
+        return PUBLIC_PATHS.stream().anyMatch(path::startsWith);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
@@ -41,8 +50,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
 
         // Bỏ qua các path công khai hoặc request OPTIONS (preflight CORS)
-        if ("OPTIONS".equalsIgnoreCase(request.getMethod()) ||
-                PUBLIC_PATHS.stream().anyMatch(path::startsWith)) {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod()) || isPublic(path)) {
             chain.doFilter(request, response);
             return;
         }
@@ -67,6 +75,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 return;
             }
 
+            // Phân quyền theo role: ADMIN dùng mọi API, role khác chỉ hỏi đáp AI (xem RoleAccessPolicy)
+            if (!RoleAccessPolicy.permits(validationResponse.getRole(), path)) {
+                log.warn("RBAC: '{}' (role '{}') bị chặn {} {}", validationResponse.getUsername(), validationResponse.getRole(), request.getMethod(), path);
+                reject(response, HttpServletResponse.SC_FORBIDDEN, "Forbidden", "Tài khoản của bạn không có quyền sử dụng chức năng này.");
+                return;
+            }
+
             // Token hợp lệ -> Chèn thêm Header danh tính (X-User-*) để các service phía sau sử dụng
             HeaderMapRequestWrapper requestWrapper = new HeaderMapRequestWrapper(request);
             requestWrapper.addHeader("X-User-Id", String.valueOf(validationResponse.getUserId()));
@@ -85,10 +100,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     }
 
     private void rejectUnauthorized(HttpServletResponse response, String message) throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        reject(response, HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized", message != null ? message : "Unauthorized");
+    }
+
+    private void reject(HttpServletResponse response, int status, String error, String message) throws IOException {
+        response.setStatus(status);
         response.setContentType("application/json;charset=UTF-8");
-        String safeMsg = escapeJson(message != null ? message : "Unauthorized");
-        response.getWriter().write(String.format("{\"error\":\"Unauthorized\",\"message\":\"%s\"}", safeMsg));
+        response.getWriter().write(String.format("{\"error\":\"%s\",\"message\":\"%s\"}", error, escapeJson(message)));
     }
 
     private static String escapeJson(String input) {

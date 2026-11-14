@@ -192,8 +192,9 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_USER:-file_service}
       MINIO_SECRET_KEY: ${MINIO_PASSWORD:-file_service_secret}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?đặt INTERNAL_TOKEN trong .env}   # /internal/** (ai-service bao ket qua OCR); header X-Internal-Token
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"   # chi loopback: file-service khong co xac thuc, ben ngoai di qua api-gateway
 
   ai-service:
     build: ./ai-service
@@ -207,9 +208,10 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
-    env_file: ./ai-service/.env   # API_KEY, GROQ_QWEN_MODEL, ...
+    env_file: ./ai-service/.env   # GROQ_API_KEY, GROQ_QWEN_MODEL, ...
     environment:
       QDRANT_URL: http://qdrant:6333
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?đặt INTERNAL_TOKEN trong .env}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-file_service}:${RABBITMQ_PASSWORD:-secret}@rabbitmq:5672/
       FILE_SERVICE_URL: http://file-service:8080
       OCR_VL_URL: http://paddleocr-vl-api:8080   # OCR trang scan: PaddleOCR-VL-1.6 (hai service paddleocr-* bên dưới)
@@ -218,7 +220,7 @@ services:
     ports:
       - "8001:8000"   # API + Swagger UI (http://localhost:8001/docs); 8000 hay bị uvicorn chạy tay trên máy chiếm
     volumes:
-      - hf_cache:/data/hf   # BGE-M3 + jina reranker (~3GB), tải lần đầu khi có request /ask
+      - hf_cache:/data/hf   # BGE-M3 + reranker (~3GB), tải lần đầu khi có request /ask
       - groq_cache:/data/groq_cache
     # Cần NVIDIA GPU + Docker Desktop (WSL2). Máy không có GPU: xóa khối `deploy` và build bản CPU (xem ai-service/Dockerfile).
     deploy:
@@ -306,6 +308,7 @@ configs:
     content: |
       gpu-memory-utilization: ${OCR_VLM_GPU_UTIL:-0.6}
       max-num-seqs: ${OCR_VLM_MAX_SEQS:-16}
+      max-num-batched-tokens: ${OCR_VLM_MAX_BATCHED_TOKENS:-131072}
 
 # Tên volume giữ nguyên như các file compose cũ để không mất dữ liệu đã có.
 volumes:

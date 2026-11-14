@@ -1,0 +1,7 @@
+# Suy ra loai van ban (loai_van_ban) tu ten tai lieu: dong khop dau tien (re.match tren ten viet thuong) thang, khong khop dong nao thi la "khac".
+# Moi dong: {"pattern": regex, "loai": ten loai}
+{"pattern": "(thông báo|tb\\d*\\b)", "loai": "thong_bao"}
+{"pattern": "(đơn|báo cáo|giấy xác nhận|danh sách|phiếu)", "loai": "bieu_mau"}
+{"pattern": "hướng dẫn", "loai": "huong_dan"}
+{"pattern": "quy chế", "loai": "quy_che"}
+{"pattern": "(quy định|quy đinh|quy trình)", "loai": "quy_dinh"}
