@@ -59,6 +59,23 @@ export function LeftSidebarRail() {
             </button>
           )}
 
+          {/* Hàng 4: Quản lý tài khoản */}
+          <button
+            aria-label="Quản lý tài khoản"
+            title="Quản lý tài khoản"
+            className={`w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
+              activeView === 'accounts'
+                ? 'text-[#55b9ff] bg-[#212121]'
+                : 'text-[#b4b4b4] hover:text-white hover:bg-[#212121]'
+            }`}
+            type="button"
+            onClick={() => setActiveView('accounts')}
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          </button>
+
           {/* Hàng 4: Lịch sử chat */}
           <button
             aria-label="Lịch sử chat"

@@ -6,6 +6,7 @@ import { ChatInput } from '@/components/chat/ChatInput'
 import { VoiceCallView } from '@/components/chat/VoiceCallView'
 import { AuthScreen } from '@/components/auth/AuthScreen'
 import { OcrDemoView } from '@/components/ocr/OcrDemoView'
+import { AccountManagementView } from '@/components/account/AccountManagementView'
 
 function MainContent() {
   const { token, isAdmin, activeView, setActiveView, messages, isLoading, sendMessage, sendVoiceMessage } = useChat()
@@ -16,7 +17,9 @@ function MainContent() {
 
   return (
     <AppLayout>
-      {activeView === 'ocr' && isAdmin ? (
+      {activeView === 'accounts' ? (
+        <AccountManagementView />
+      ) : activeView === 'ocr' && isAdmin ? (
         <OcrDemoView />
       ) : activeView === 'call' ? (
         <VoiceCallView onEndCall={() => setActiveView('chat')} />
