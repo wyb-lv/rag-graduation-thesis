@@ -1,6 +1,6 @@
 """Đo lại RERANK_MIN_SCORE trên corpus đã nạp trong Qdrant.
 
-Chạy (cần Qdrant có dữ liệu, tải BGE-M3 + reranker):
+Chạy (cần Qdrant có dữ liệu, tải model embedding + reranker):
     python -m scripts.calibrate_rerank [--khoa 2024]
 
 Với mỗi câu hỏi lấy điểm rerank của đoạn tốt nhất. Câu trong phạm vi phải vượt ngưỡng, câu ngoài phạm vi phải

@@ -12,7 +12,7 @@ FE goi:
       data: {"event": "sources", "in_scope": true, "sources": [...]}
       data: {"event": "delta", "text": "..."}      (lap lai)
       data: [DONE]                                   (hoac data: {"event": "error", "detail": "..."})
-BGE-M3 va reranker nap ngay khi server khoi dong (thread nen) va nam trong bo nho cho cac
+Model embedding va reranker nap ngay khi server khoi dong (thread nen) va nam trong bo nho cho cac
 request sau. Request toi khi dang nap se cho nap xong roi chay tiep. GET /health -> "models": pending/ready/error.
 """
 import json
@@ -446,7 +446,7 @@ class EmbedResponse(BaseModel):
 def embed_document(payload: EmbedRequest):
     """Embed văn bản của một tài liệu vào Qdrant để phục vụ RAG.
 
-    - Tách thành đoạn → BGE-M3 (dense) + BM25 → upsert Qdrant.
+    - Tách thành đoạn → model embedding (dense) + BM25 → upsert Qdrant.
     - Idempotent: xóa vector cũ của `document_id` trước khi thêm mới.
     - Thường được gọi tự động từ RabbitMQ consumer sau khi file-service OCR xong.
     - Có thể gọi thủ công để re-index hoặc kiểm thử.

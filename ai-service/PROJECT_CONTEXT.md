@@ -20,7 +20,7 @@ FE (React, :5173) ──► api-gateway (:9090) ──┬─► auth-service  (:
                                             └─► ai-service    (:8000 trong container,        │
                                                               :8001 trên máy host) ◄─────────┘
                                                    │  embed job (queue ai-service.embed.jobs)
-                                                   ├─► Qdrant (:6333)   collection quy_dinh_hybrid_v2
+                                                   ├─► Qdrant (:6333)   collection quy_dinh_hybrid_v3
                                                    └─► Groq API (LLM)
 ```
 
@@ -55,7 +55,7 @@ Thứ tự trong một request:
 **Session** ([app/session.py](app/session.py)): mỗi `session_id` (UUID, server tạo UUID v4 nếu thiếu) là một LlamaIndex `Memory` chỉ giữ lịch sử chat ngắn hạn (không có memory block gọi LLM), tất cả dùng chung **một** engine SQLite (trong RAM với `SESSION_STORE=memory`, file với `sqlite`). Server không bao giờ nhận lịch sử từ client. Cửa sổ đưa vào prompt: tối đa `SESSION_MAX_TURNS` lượt **và** `SESSION_MAX_HISTORY_TOKENS` token (đếm bảo thủ 2 ký tự/token cho tiếng Việt), mỗi tin bị cắt `SESSION_MESSAGE_MAX_CHARS`. Mỗi session có một `asyncio.Lock`: request thứ hai cùng session chờ request đầu xong (kể cả stream) nên cả hai được trả lời và lưu đúng thứ tự. Hết hạn `SESSION_TTL_S` (tính từ lượt lưu cuối) hoặc quá `SESSION_MAX_SESSIONS` (LRU) thì lịch sử bị xóa; session đang có request giữ/chờ không bị dọn. `reset=true` xóa lịch sử trước khi xử lý. Khóa lưu trữ là `session_id`, hoặc `X-User-Id:session_id` khi gateway gửi header đó (xem mục 9). **Không mở được session store thì request vẫn được trả lời, chỉ không có lịch sử** (log ghi loại lỗi, không ghi nội dung).
 
 1. `_query_legs()` tạo vector truy vấn cho từng nhánh trong `HYBRID_LEGS` (mặc định `dense,bm25`):
-   - `dense` (1024 chiều) lấy từ `encoders.encode_texts([question])` (BGE-M3 qua sentence-transformers, GPU);
+   - `dense` (1024 chiều) lấy từ `encoders.encode_texts([question])` (Vietnamese_Embedding_v2 qua sentence-transformers, GPU);
    - `bm25` là `bm25.bm25_query_vector(question)` ([app/bm25.py](app/bm25.py), CPU): token âm tiết + bigram, IDF do Qdrant nhân lúc truy vấn;
    Nhánh nào không có token (câu hỏi toàn dấu câu) bị bỏ; không còn nhánh nào thì dùng dense.
 2. `retrieve()`: **một** request `query_points` tới Qdrant, mỗi nhánh là một `Prefetch` (limit `TOP_K_RETRIEVAL`=20); Qdrant hợp nhất các nhánh bằng **RRF** ở phía server và trả `TOP_K_RETRIEVAL` ứng viên (mỗi chunk chỉ ra một lần dù nằm trong nhiều danh sách). **Lọc metadata trước khi tìm vector**: cùng một filter (`kho`, văn bản còn hiệu lực tại `reference_date` mặc định hôm nay, `khoa` của sinh viên, `loai_van_ban` nếu có) được gắn vào từng Prefetch; Qdrant áp nó ngay trong lúc tìm (có payload index) chứ không lọc sau khi đã lấy top-k, và nhánh nào thiếu filter sẽ trả cả đoạn ngoài phạm vi. Chỉ còn một nhánh thì truy vấn thẳng nhánh đó (điểm là điểm của nhánh, không phải RRF). Mode `dense` luôn chỉ dùng dense, bỏ qua `HYBRID_LEGS`.
@@ -109,14 +109,14 @@ Code: [app/ingest/embed_consumer.py](app/ingest/embed_consumer.py) → [app/inge
 
 ## 5. Dữ liệu trong Qdrant
 
-Collection `quy_dinh_hybrid_v2` (tên đặt bằng `QDRANT_COLLECTION`) có các named vector:
+Collection `quy_dinh_hybrid_v3` (tên đặt bằng `QDRANT_COLLECTION`) có các named vector:
 
 | Vector | Loại | Ghi chú |
 |---|---|---|
-| `dense` | 1024, cosine, HNSW m=32, ef_construct=200 | BGE-M3 |
+| `dense` | 1024, cosine, HNSW m=32, ef_construct=200 | Vietnamese_Embedding_v2 (`EMBED_MODEL`, ghim `EMBED_REVISION`) |
 | `bm25` | sparse, `modifier=IDF` | trọng số tf + chuẩn hóa độ dài do [app/bm25.py](app/bm25.py) tính lúc index; Qdrant nhân IDF lúc truy vấn |
 
-Collection `quy_dinh_hybrid` cũ không còn được dùng và không bị code động tới. Script chép sang v2 đã chạy xong trên máy dev rồi bị xóa (còn trong git history); môi trường khác embed lại tài liệu qua `/embed` hoặc RabbitMQ. Vector dense của sentence-transformers và của FlagEmbedding cùng một model BGE-M3 (đã đo cosine ≈ 1, lệch ≤ 2,4e-4 ở fp16).
+Collection `quy_dinh_hybrid` (dense-only) và `quy_dinh_hybrid_v2` (dense BGE-M3 + BM25) cũ không còn được dùng và không bị code động tới; môi trường khác embed lại tài liệu qua `/embed` hoặc RabbitMQ. Đổi model embedding thì đổi tên collection (`QDRANT_COLLECTION`) rồi embed lại mọi tài liệu: vector hai model cùng 1024 chiều nên trộn chung một collection không báo lỗi mà xếp hạng sai.
 
 Payload mỗi điểm: `document_id`, `source`, `text`, `paragraph_index`, `loai_van_ban`, `dieu`, `chuong`, và tùy chọn `kho`, `hieu_luc_tu`, `hieu_luc_den`, `khoa`, `khoa_tu`, `khoa_den`. Có payload index cho `kho`, `doi_tuong`, `loai_van_ban` (keyword), `hieu_luc_*` (datetime), `khoa_*` (integer) khi collection được tạo bởi `qdrant_setup.create_collection()`. Tên các field đổi ở các hằng số `FIELD_*` trong [app/config.py](app/config.py).
 
@@ -146,7 +146,7 @@ ai-service/
 │   ├── rag/
 │   │   └── query_model.py        # Pipeline RAG: filter, retrieve (RRF), rerank, prompt, ngưỡng
 │   ├── models/
-│   │   └── encoders.py           # Singleton BGE-M3 (SentenceTransformer) + reranker (CrossEncoder); lock suy luận; xử lý CUDA OOM
+│   │   └── encoders.py           # Singleton model embedding (SentenceTransformer) + reranker (CrossEncoder); lock suy luận; xử lý CUDA OOM
 │   ├── llm/
 │   │   └── groq_client.py        # Groq client: rate limit RPM/TPM, backoff, cache đĩa, ThinkFilter
 │   ├── ocr/
@@ -212,9 +212,9 @@ ai-service/
 
 - **Toàn hệ thống**: ở thư mục gốc repo, `docker-compose up -d --build`. Swagger của ai-service: http://localhost:8001/docs. Qua gateway: `http://localhost:9090/api/ai/health`.
 - **Cần NVIDIA GPU** (compose đặt `deploy.resources.reservations.devices`). Máy không có GPU: xóa khối đó và build với `TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu`.
-- Model BGE-M3 + reranker (~3GB) lưu ở volume `kltn_hf_cache`; lần đầu tải rất lâu.
+- Model embedding + reranker (~3GB) lưu ở volume `kltn_hf_cache`; lần đầu tải rất lâu.
 - **Chạy tay**: `uvicorn app.api:app --port 8000` (cần Qdrant và `.env`).
-- **Test** (trong thư mục `ai-service`, cấu hình ở `pytest.ini`): `python -m pytest -m "not integration"` là unit test, không cần mạng (router được thay tại `router_llm._complete`; encoder, Qdrant, reranker và Groq là bản giả). Test `live` gọi Gemini thật (tốn quota) bị bỏ qua mọi lúc trừ khi chọn rõ `python -m pytest -m live`. Test `integration` cần Qdrant ở `QDRANT_URL` và chỉ dùng collection tạm `test_*` (tự xóa, không đụng collection thật): `tests/test_qdrant_hybrid.py`. `tests/test_encoders.py` cần thêm model BGE-M3 thật nên chạy trong container (dừng ai-service trước để có VRAM). Xem mục 10 về test còn hỏng.
+- **Test** (trong thư mục `ai-service`, cấu hình ở `pytest.ini`): `python -m pytest -m "not integration"` là unit test, không cần mạng (router được thay tại `router_llm._complete`; encoder, Qdrant, reranker và Groq là bản giả). Test `live` gọi Gemini thật (tốn quota) bị bỏ qua mọi lúc trừ khi chọn rõ `python -m pytest -m live`. Test `integration` cần Qdrant ở `QDRANT_URL` và chỉ dùng collection tạm `test_*` (tự xóa, không đụng collection thật): `tests/test_qdrant_hybrid.py`. `tests/test_encoders.py` cần thêm model embedding thật nên chạy trong container (dừng ai-service trước để có VRAM). Xem mục 10 về test còn hỏng.
 - **Bytecode (`__pycache__`)**: `app/` không có `__init__.py` (namespace package, như `scripts/` và `tests/`) và dự án chỉ có **một** `__pycache__` ở gốc `ai-service`. `pytest` tự làm vậy nhờ [conftest.py](conftest.py). Với `uvicorn` hay script chạy tay trên máy host, đặt biến môi trường trước khi chạy, nếu không Python sẽ tạo lại `__pycache__` cạnh từng thư mục: PowerShell `$env:PYTHONPYCACHEPREFIX = "$PWD\__pycache__"`, bash `export PYTHONPYCACHEPREFIX="$PWD/__pycache__"`. Python gom cache vào một thư mục thì bỏ qua cache sẵn có của thư viện, nên lần chạy đầu chậm thêm khoảng 25 giây và cache nặng ~100MB (phần lớn là torch, transformers). Muốn không có cache nào thì đặt `PYTHONDONTWRITEBYTECODE=1`; Docker đã đặt sẵn nên container không có `__pycache__`.
 - **Đo lại ngưỡng rerank trong container**: `docker-compose run --rm --no-deps ai-service python -m scripts.calibrate_rerank` (muốn đo trên collection/nhánh khác thì sửa `QDRANT_COLLECTION`/`HYBRID_LEGS` trong `app/config.py` và build lại; `-e` không còn đổi được chúng) (GPU 4GB không đủ chạy song song với ai-service đang chạy, hãy `docker-compose stop ai-service` trước).
 - Tài khoản demo để gọi qua gateway: `demo_hsu` / `Password@123` (seed của auth-service). Token JWT sống 15 phút.
@@ -242,7 +242,8 @@ ai-service/
 - **LlamaIndex Memory**: hạn mức token đếm bằng `tokenizer_fn` của ta (2 ký tự/token) chứ không phải tiktoken (tránh tải từ vựng qua mạng); Memory luôn giữ ít nhất một lượt gần nhất kể cả khi vượt hạn mức. Cắt theo số lượt/token khi đưa vào prompt do `session._window` làm.
 - `qm.main()` (CLI) và gọi thẳng `qm.ask()` không đi qua router/session; chỉ có prompt có rào và guard đầu ra (nằm trong `qm`).
 - **Prompt, câu trả lời cố định và bảng luật nằm trong `app/texts/`, không hard-code.** Sửa file là đổi hành vi (build lại image). Đổi `router_prompt.txt` hoặc `app/router/examples/*.jsonl` thì tăng `ROUTER_PROMPT_VERSION`; đổi `answer_system.txt` hoặc `security_rules.txt` thì canary và cache Groq đổi theo. Phần `infer_metadata` chỉ bảng loại văn bản ra file; cách đọc "khóa 2020 trở về trước / từ khóa X trở đi" vẫn nằm trong code.
-- **Chỉ còn pipeline hybrid (dense + BM25) rồi rerank; không còn sparse của BGE-M3** (đổi 2026-11-07 theo yêu cầu, đảo ngược quyết định gỡ BM25 ngày 2026-10-24). Đã xóa các mode `dense`/`hybrid`, `RAG_MODE`, `SCORE_THRESHOLD` và tham số `mode` của API/CLI/UI. Dense qua `sentence-transformers` (không còn FlagEmbedding, không còn `sparse_linear.pt`/`colbert_linear.pt`). BM25 tự viết ([app/bm25.py](app/bm25.py)): tokenizer `syllable_bigram` mặc định, chỉ có `syllable` và `syllable_bigram` (bỏ nhánh `pyvi` của bản cũ cho khỏi kéo thêm 3 thư viện). Collection là `quy_dinh_hybrid_v2`; dữ liệu cũ chép sang bằng `python -m scripts.migrate_add_bm25` (hoặc embed lại tài liệu).
+- **Chỉ còn pipeline hybrid (dense + BM25) rồi rerank; không còn sparse của BGE-M3** (đổi 2026-11-07 theo yêu cầu, đảo ngược quyết định gỡ BM25 ngày 2026-10-24). Đã xóa các mode `dense`/`hybrid`, `RAG_MODE`, `SCORE_THRESHOLD` và tham số `mode` của API/CLI/UI. Dense qua `sentence-transformers` (không còn FlagEmbedding, không còn `sparse_linear.pt`/`colbert_linear.pt`). BM25 tự viết ([app/bm25.py](app/bm25.py)): tokenizer `syllable_bigram` mặc định, chỉ có `syllable` và `syllable_bigram` (bỏ nhánh `pyvi` của bản cũ cho khỏi kéo thêm 3 thư viện). Collection lúc đó là `quy_dinh_hybrid_v2`; dữ liệu cũ chép sang bằng `python -m scripts.migrate_add_bm25` (hoặc embed lại tài liệu).
+- **Model embedding là `AITeamVN/Vietnamese_Embedding_v2` (fine-tune BGE-M3 cho tiếng Việt, Apache-2.0), `EMBED_MAX_LENGTH=768`** (đổi 2026-11-14 theo yêu cầu). Cùng kiến trúc, 1024 chiều, pooling CLS + chuẩn hóa, không cần tiền tố cho câu hỏi/đoạn nên `encode_texts` không đổi. Revision được ghim (`EMBED_REVISION`). Vector hai model nằm ở hai không gian khác nhau nhưng cùng 1024 chiều, nên collection mới là `quy_dinh_hybrid_v3` và mọi tài liệu phải embed lại; `quy_dinh_hybrid_v2` (BGE-M3) giữ làm bản lui, xóa khi không cần.
 - **Filter phải nằm trong từng Prefetch.** Đã thử trên Qdrant 1.19.1 + client 1.19.1: filter cấp cao nhất đứng một mình cũng lọc được các prefetch, nhưng không nên dựa vào đó (phiên bản khác có thể khác); và gắn filter cho chỉ một nhánh thì nhánh kia vẫn trả đoạn ngoài phạm vi. `retrieve()` gắn cùng một filter vào mọi Prefetch.
 
 ## 10. Tài liệu/code đã lỗi thời (đừng tin)

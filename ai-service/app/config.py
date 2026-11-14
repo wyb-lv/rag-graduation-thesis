@@ -1,4 +1,4 @@
-"""Cau hinh tap trung cho pipeline RAG hybrid (BGE-M3 dense + BM25 -> Qdrant RRF -> reranker -> Groq Qwen).
+"""Cau hinh tap trung cho pipeline RAG hybrid (Vietnamese_Embedding_v2 dense + BM25 -> Qdrant RRF -> reranker -> Groq Qwen).
 
 Bon bien doc tu moi truong (file .env, `environment` cua docker-compose, ENV cua Dockerfile):
 GROQ_API_KEY, GROQ_QWEN_MODEL, QDRANT_URL, GROQ_CACHE_DIR; cong them cac bien ROUTER_* / SESSION_* / GEMINI_API_KEY / MONGODB_*
@@ -21,22 +21,24 @@ def _env(name, default, cast=str):
 
 
 # ---- Model (tai mot lan moi tien trinh, xem encoders.py) ----
-EMBED_MODEL = "BAAI/bge-m3"
+EMBED_MODEL = "AITeamVN/Vietnamese_Embedding_v2"  # fine-tune BGE-M3 cho tieng Viet (1024 chieu, Apache-2.0); khong can tien to cau hoi/doan
+# Ghim revision: vector trong Qdrant phai cung model voi luc truy van, ban moi cua repo se lam lech khong gian vector.
+EMBED_REVISION = "18b44161e041bf1d3a333ab5144b5b7b93f914d2"
 # Reranker CrossEncoder (sentence-transformers): mmBERT-base (ModernBERT, 308M) chung cat tu Qwen3-Reranker-4B, da ngon ngu
 # (co tieng Viet), giay phep Apache-2.0. Huan luyen o 384 token/cap, model card van dung max_length 512.
 RERANK_MODEL = "Horizon-Labs/multilingual-reranker-base"
 # Weights/config/tokenizer lay dung revision nay (de trong = ban moi nhat cua nhanh main; repo nay con dang duoc cap nhat).
 RERANK_REVISION = "7330f6d0b3f560af0c2b9a63820ea299a45fd91b"
 RERANK_DTYPE = "float16"  # tren CPU luon dung float32
-USE_FP16 = True  # chi cho BGE-M3
+USE_FP16 = True  # model embedding (tren GPU)
 # Thiet bi: "cuda:0", "cpu"... None = tu chon (cuda:0 neu co GPU, khong thi cpu).
 EMBED_DEVICE = None
-# Dat RERANK_DEVICE = "cpu" de chay reranker bang CPU, nhuong ~1.1GB VRAM cho BGE-M3 (RTX 3050 4GB).
+# Dat RERANK_DEVICE = "cpu" de chay reranker bang CPU, nhuong ~1.1GB VRAM cho model embedding (RTX 3050 4GB).
 RERANK_DEVICE = None
 # Khi CUDA OOM ngay ca khi chi cham 1 doan/lan: chuyen reranker sang CPU thay vi bao loi.
 RERANK_CPU_ON_OOM = False
 EMBED_BATCH_SIZE = 16
-EMBED_MAX_LENGTH = 768  # chunk dai nhat trong kho ~764 token (BGE-M3 toi da 8192); 512 cu cat ~6.5% chunk
+EMBED_MAX_LENGTH = 768  # chunk dai nhat ~720 token voi OCR hien tai (model huan luyen toi da 2048 token/doan); 512 cu chi cat ~1% chunk (12/1205)
 # So cap (cau hoi, doan) cham trong mot luot chay model; khi OOM thi chia doi. Moi cap cham doc lap nen batch khong doi diem.
 RERANK_BATCH_SIZE = 16
 RERANK_MAX_LENGTH = 512  # token toi da cua ca cap (cau hoi + doan), phan thua bi cat; de vua VRAM 4GB
@@ -48,9 +50,9 @@ WARMUP_WAIT_S = _env("WARMUP_WAIT_S", 900.0, float)
 
 # ---- Qdrant ----
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
-# dense (BGE-M3) + bm25. Collection `quy_dinh_hybrid` cu khong bi dong toi: chep sang day bang
-# `python -m scripts.migrate_add_bm25` (khong can GPU, dense chep nguyen, bm25 tinh tu payload `text`).
-QDRANT_COLLECTION = "quy_dinh_hybrid_v2"
+# dense (EMBED_MODEL) + bm25. Doi EMBED_MODEL thi doi ten collection (v3 = Vietnamese_Embedding_v2; v2 = BGE-M3) va embed lai tat ca tai lieu:
+# vector hai model cung 1024 chieu nen tron chung mot collection se khong bao loi nhung xep hang sai.
+QDRANT_COLLECTION = "quy_dinh_hybrid_v3"
 # Collection dense-only cu: app khong con doc hay ghi; chi tests/test_qdrant_hybrid.py kiem tra no khong bi dong toi.
 QDRANT_LEGACY_COLLECTION = "paragraphs"
 DENSE_VECTOR_NAME = "dense"

@@ -1,4 +1,4 @@
-"""Chay model that (BGE-M3 ~1.1GB, Vietnamese_Reranker ~1.1GB VRAM). Bo qua bang: pytest -m "not integration"."""
+"""Chay model that (model embedding ~1.1GB, Vietnamese_Reranker ~1.1GB VRAM). Bo qua bang: pytest -m "not integration"."""
 import numpy as np
 import pytest
 
