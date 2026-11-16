@@ -77,4 +77,4 @@ def doc_vectors(text: str, avg_len: Optional[float] = None, tokenizer: Optional[
 
 def bm25_query_vector(text: str) -> models.SparseVector:
     """Trọng số 1.0 cho mỗi token duy nhất của câu hỏi (IDF do Qdrant nhân thêm)."""
-    return _vector({token: 1.0 for token in bm25_tokens(text)})
+    return _vector(dict.fromkeys(bm25_tokens(text), 1.0))

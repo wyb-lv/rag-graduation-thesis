@@ -18,7 +18,7 @@ def create_collection(client: QdrantClient, name: str):
         collection_name=name,
         vectors_config={
             cfg.DENSE_VECTOR_NAME: models.VectorParams(
-                size=cfg.EMBED_DIM, 
+                size=cfg.EMBED_DIM,
                 distance=models.Distance.COSINE,
                 hnsw_config=models.HnswConfigDiff(m=cfg.HNSW_M, ef_construct=cfg.HNSW_EF_CONSTRUCT),
                 on_disk=False,
@@ -72,8 +72,7 @@ def validate_legs(client: QdrantClient, name: Optional[str] = None, legs: Option
     if missing:
         raise RuntimeError(
             f"Collection '{name}' thiếu vector cho nhánh {', '.join(missing)} "
-            f"(HYBRID_LEGS={','.join(legs)}). Chạy `python -m scripts.migrate_add_bm25` để chép collection cũ sang "
-            f"collection mới có bm25, hoặc embed lại tài liệu vào collection tạo bằng qdrant_setup.create_collection, "
-            f"hoặc bỏ nhánh đó khỏi HYBRID_LEGS."
+            f"(HYBRID_LEGS={','.join(legs)}). Embed lại tài liệu vào collection tạo bằng "
+            f"qdrant_setup.create_collection, hoặc bỏ nhánh đó khỏi HYBRID_LEGS."
         )
     log.info("Nhánh hybrid đang dùng: %s (collection '%s')", ", ".join(legs), name)

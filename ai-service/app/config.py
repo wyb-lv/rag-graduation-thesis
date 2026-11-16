@@ -95,7 +95,7 @@ BM25_TOKENIZER = "syllable_bigram"
 BM25_K1 = 1.2
 BM25_B = 0.75
 # So token BM25 trung binh moi chunk, do tren kho that (1319 chunk / 78 van ban, 2026-11-07). Trong so cua chunk luu o Qdrant da gom
-# do dai chunk / gia tri nay, nen doi o day thi phai nap lai bm25: scripts/migrate_add_bm25.py do lai kho va in gia tri moi.
+# do dai chunk / gia tri nay, nen doi o day thi phai embed lai tai lieu (gia tri moi = trung binh len(bm25.bm25_tokens(text)) tren cac chunk dang luu).
 BM25_AVG_LEN = 370.13
 
 # Diem rerank (sigmoid cua CrossEncoder, 0..1) toi thieu de doan van duoc coi la lien quan. Dat 0 de tat.
