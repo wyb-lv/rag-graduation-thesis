@@ -106,6 +106,13 @@ def test_default_canary_is_a_fixed_function_of_the_prompt_text(monkeypatch):
 CANARY = guard._protected["canary"]
 
 
+def test_text_and_voice_prompts_share_one_canary_and_both_are_protected():
+    assert CANARY in qm.SYSTEM_PROMPT and CANARY in qm.VOICE_CALL_SYSTEM_PROMPT
+    voice_only = "Hãy trả lời ngắn gọn trong 2 đến 3 câu súc tích, đi thẳng vào thông tin quan trọng nhất, dùng văn phong nói tự nhiên"
+    assert not guard.check_output(voice_only)  # chi co trong prompt thoai
+    assert not guard.check_output(qm.BASE_SYSTEM_PROMPT[:400])  # chi co trong prompt chat (bi prompt thoai ghi de truoc day)
+
+
 def test_check_output_passes_a_normal_cited_answer():
     answer = (
         "Sinh viên được đăng ký tối đa 25 tín chỉ mỗi học kỳ [Quy chế đào tạo, Điều 15, Khoản 2]. "

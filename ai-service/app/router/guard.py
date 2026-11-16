@@ -90,16 +90,18 @@ def _shingles(words):
     return {" ".join(words[i:i + _SHINGLE]) for i in range(len(words) - _SHINGLE + 1)}
 
 
-def harden_prompt(rules):
+def harden_prompt(rules, canary_from=None):
     """Them quy tac chong injection + canary vao system prompt, va ghi lai canary / dau van tay cho check_output.
 
-    Canary suy ra tu `rules` (hoac GUARD_CANARY) nen on dinh moi lan trien khai: prompt khong doi thi cache dia Groq van trung."""
-    canary = cfg.GUARD_CANARY or "CANARY-" + hashlib.sha256(rules.encode("utf-8")).hexdigest()[:12]
+    Canary suy ra tu `canary_from` (mac dinh `rules`) hoac GUARD_CANARY nen on dinh moi lan trien khai: prompt khong doi thi cache dia Groq van trung.
+    Nhieu prompt (chat, thoai) goi nhieu lan: dau van tay cua cac prompt cong don, va chung `canary_from` thi chung mot canary de guard dau ra
+    bat duoc ca hai (truoc day lan goi sau ghi de lan truoc nen prompt chat khong con duoc bao ve)."""
+    canary = cfg.GUARD_CANARY or "CANARY-" + hashlib.sha256((canary_from or rules).encode("utf-8")).hexdigest()[:12]
     prompt = rules + _SECURITY_RULES.format(canary=canary)
     shingles = _shingles(_words(prompt.replace(canary, " ")))
     for quoted in re.findall(r'"([^"]*)"', prompt):  # cau duoc phep noi nguyen van (trong dau ngoac kep) khong tinh la lo prompt
         shingles -= _shingles(_words(quoted))
-    _protected.update(canary=canary, shingles=frozenset(shingles))
+    _protected.update(canary=canary, shingles=_protected["shingles"] | frozenset(shingles))
     return prompt
 
 
