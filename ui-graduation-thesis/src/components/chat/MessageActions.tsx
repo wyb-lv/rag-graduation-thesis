@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { CopyIcon, ThumbsDownIcon, ShareIcon, RegenerateIcon, MoreDotsIcon } from '@/components/icons'
-import { synthesizeSpeech } from '@/services/conversationService'
+import { CopyIcon } from '@/components/icons'
+import { playAudioResponseStream, synthesizeSpeechResponse } from '@/services/conversationService'
 
 interface MessageActionsProps {
   content?: string
@@ -8,24 +8,57 @@ interface MessageActionsProps {
 
 export function MessageActions({ content = '' }: MessageActionsProps) {
   const [ttsState, setTtsState] = useState<'idle' | 'loading' | 'playing'>('idle')
+  const [copied, setCopied] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const cachedBlobRef = useRef<{ text: string; blob: Blob } | null>(null)
+  const cachedObjectUrlRef = useRef<string | null>(null)
+  const copyTimerRef = useRef<number | null>(null)
 
   const stopPlayback = () => {
     abortRef.current?.abort()
     abortRef.current = null
     if (audioRef.current) {
+      audioRef.current.onended = null
+      audioRef.current.onerror = null
       audioRef.current.pause()
       audioRef.current.src = ''
       audioRef.current = null
+    }
+    if (cachedObjectUrlRef.current) {
+      URL.revokeObjectURL(cachedObjectUrlRef.current)
+      cachedObjectUrlRef.current = null
     }
     setTtsState('idle')
   }
 
   useEffect(() => {
-    return () => stopPlayback()
+    return () => {
+      stopPlayback()
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current)
+      }
+    }
   }, [])
+
+  const handleCopy = async () => {
+    const cleanText = content.trim()
+    if (!cleanText) return
+
+    try {
+      await navigator.clipboard.writeText(cleanText)
+      setCopied(true)
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current)
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopied(false)
+        copyTimerRef.current = null
+      }, 2000)
+    } catch (err) {
+      console.error('[Copy Error]:', err)
+    }
+  }
 
   const handleToggleTts = async () => {
     const cleanText = content.trim()
@@ -41,36 +74,70 @@ export function MessageActions({ content = '' }: MessageActionsProps) {
     setTtsState('loading')
 
     try {
-      let audioBlob: Blob
       if (cachedBlobRef.current && cachedBlobRef.current.text === cleanText) {
-        audioBlob = cachedBlobRef.current.blob
-      } else {
-        audioBlob = await synthesizeSpeech(cleanText, controller.signal)
-        cachedBlobRef.current = { text: cleanText, blob: audioBlob }
+        const objectUrl = URL.createObjectURL(cachedBlobRef.current.blob)
+        cachedObjectUrlRef.current = objectUrl
+        const audio = new Audio(objectUrl)
+        audioRef.current = audio
+
+        const done = () => {
+          URL.revokeObjectURL(objectUrl)
+          if (cachedObjectUrlRef.current === objectUrl) {
+            cachedObjectUrlRef.current = null
+          }
+          if (audioRef.current === audio) {
+            audioRef.current = null
+          }
+          setTtsState('idle')
+        }
+
+        audio.onended = done
+        audio.onerror = done
+        setTtsState('playing')
+        await audio.play()
+        return
       }
 
-      if (controller.signal.aborted) return
-
-      const objectUrl = URL.createObjectURL(audioBlob)
-      const audio = new Audio(objectUrl)
-      audioRef.current = audio
-
-      audio.onended = () => {
-        URL.revokeObjectURL(objectUrl)
+      const res = await synthesizeSpeechResponse(cleanText, controller.signal)
+      if (!res || controller.signal.aborted) {
         setTtsState('idle')
-      }
-      audio.onerror = () => {
-        URL.revokeObjectURL(objectUrl)
-        setTtsState('idle')
+        return
       }
 
-      setTtsState('playing')
-      await audio.play()
+      const audio = await playAudioResponseStream(
+        res,
+        {
+          onPlayStart: () => {
+            if (!controller.signal.aborted) {
+              setTtsState('playing')
+            }
+          },
+          onEnded: () => {
+            if (audioRef.current === audio) {
+              audioRef.current = null
+            }
+            setTtsState('idle')
+          },
+          onBlobCollected: (blob) => {
+            cachedBlobRef.current = { text: cleanText, blob }
+          },
+        },
+        controller.signal
+      )
+
+      if (controller.signal.aborted) {
+        audio.pause()
+        audio.src = ''
+        return
+      }
+      if (audio.src) {
+        audioRef.current = audio
+      }
     } catch (err) {
       if (!controller.signal.aborted) {
         console.error('[TTS Error]:', err)
       }
-      setTtsState('idle')
+      stopPlayback()
     }
   }
 
@@ -112,20 +179,31 @@ export function MessageActions({ content = '' }: MessageActionsProps) {
         )}
       </button>
 
-      <button aria-label="Sao chép" className="hover:text-white transition-colors" type="button">
-        <CopyIcon />
-      </button>
-      <button aria-label="Không thích" className="hover:text-white transition-colors" type="button">
-        <ThumbsDownIcon />
-      </button>
-      <button aria-label="Chia sẻ" className="hover:text-white transition-colors" type="button">
-        <ShareIcon />
-      </button>
-      <button aria-label="Tạo lại phản hồi" className="hover:text-white transition-colors" type="button">
-        <RegenerateIcon />
-      </button>
-      <button aria-label="Tùy chọn khác" className="hover:text-white transition-colors" type="button">
-        <MoreDotsIcon />
+      <button
+        aria-label={copied ? 'Đã sao chép' : 'Sao chép'}
+        title={copied ? 'Đã sao chép' : 'Sao chép'}
+        onClick={handleCopy}
+        disabled={!content.trim()}
+        className={`transition-colors cursor-pointer disabled:opacity-40 ${
+          copied ? 'text-emerald-400' : 'hover:text-white'
+        }`}
+        type="button"
+      >
+        {copied ? (
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            viewBox="0 0 24 24"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        ) : (
+          <CopyIcon />
+        )}
       </button>
     </div>
   )
