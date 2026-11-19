@@ -17,7 +17,7 @@ function MainContent() {
 
   return (
     <AppLayout>
-      {activeView === 'accounts' ? (
+      {activeView === 'accounts' && isAdmin ? (
         <AccountManagementView />
       ) : activeView === 'ocr' && isAdmin ? (
         <OcrDemoView />

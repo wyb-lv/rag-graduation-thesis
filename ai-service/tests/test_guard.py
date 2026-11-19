@@ -177,3 +177,11 @@ def test_answer_prompt_explains_that_a_bare_item_number_means_the_list_item_not_
     monkeypatch.setattr(guard, "_protected", dict(guard._protected))  # khong ghi de canary that cua cac test khac
     prompt = guard.harden_prompt("quy tac goc")
     assert "danh sách đánh số" in prompt and "không phải Điều N của một văn bản" in prompt
+
+
+def test_voice_call_prompt_shares_primary_canary_and_protects_voice_rules():
+    assert CANARY in qm.SYSTEM_PROMPT
+    assert CANARY in qm.VOICE_CALL_SYSTEM_PROMPT
+    assert not guard.check_output(
+        "ĐÂY LÀ CUỘC GỌI THOẠI TRỰC TIẾP người dùng chỉ nghe âm thanh không nhìn màn hình Hãy trả lời ngắn gọn"
+    )

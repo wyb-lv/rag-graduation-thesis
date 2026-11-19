@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchCallGreetingAudio, sendCallTurnAudio } from '@/services/conversationService'
+import {
+  fetchCallGreetingAudio,
+  playAudioResponseStream,
+  sendCallTurnAudio,
+} from '@/services/conversationService'
 
 interface VoiceCallViewProps {
   onEndCall: () => void
@@ -7,9 +11,21 @@ interface VoiceCallViewProps {
 
 type CallPhase = 'connecting' | 'speaking' | 'listening' | 'thinking' | 'error'
 
-const SPEECH_THRESHOLD_DB = -40 // Ngưỡng phát hiện bắt đầu nói (dBFS)
-const SILENCE_HOLD_MS = 1100    // Ngừng nói 1.1s -> tự động chốt câu gửi về Backend
-const MIN_SPEECH_MS = 350       // Bỏ qua tiếng động ngắn dưới 350ms
+const SPEECH_THRESHOLD_DB = -40   // Ngưỡng phát hiện bắt đầu nói (dBFS)
+const BARGE_IN_THRESHOLD_DB = -26 // Ngưỡng nói cắt ngang khi trợ lý đang nói (dBFS)
+const BARGE_IN_HOLD_FRAMES = 3    // Số khung 60ms liên tiếp (~180ms) để xác nhận cắt ngang
+const SILENCE_HOLD_MS = 1100      // Ngừng nói 1.1s -> tự động chốt câu gửi về Backend
+const MIN_SPEECH_MS = 350         // Bỏ qua tiếng động ngắn dưới 350ms
+
+function computeMicDb(analyser: AnalyserNode, pcmData: Float32Array<ArrayBuffer>): number {
+  analyser.getFloatTimeDomainData(pcmData)
+  let sumSq = 0
+  for (let i = 0; i < pcmData.length; i++) {
+    sumSq += pcmData[i] * pcmData[i]
+  }
+  const rms = Math.sqrt(sumSq / pcmData.length)
+  return 20 * Math.log10(Math.max(rms, 1e-7))
+}
 
 export function VoiceCallView({ onEndCall }: VoiceCallViewProps) {
   const [phase, setPhase] = useState<CallPhase>('connecting')
@@ -17,11 +33,14 @@ export function VoiceCallView({ onEndCall }: VoiceCallViewProps) {
   const [volumeLevel, setVolumeLevel] = useState(0)
 
   const abortRef = useRef<AbortController | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
   const audioElRef = useRef<HTMLAudioElement | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const vadTimerRef = useRef<number | null>(null)
+  const bargeInTimerRef = useRef<number | null>(null)
   const isMountedRef = useRef(true)
   const isMutedRef = useRef(false)
 
@@ -29,66 +48,141 @@ export function VoiceCallView({ onEndCall }: VoiceCallViewProps) {
     isMutedRef.current = isMuted
   }, [isMuted])
 
-  const cleanupAll = () => {
+  const clearTimers = () => {
+    if (vadTimerRef.current !== null) {
+      window.clearInterval(vadTimerRef.current)
+      vadTimerRef.current = null
+    }
+    if (bargeInTimerRef.current !== null) {
+      window.clearInterval(bargeInTimerRef.current)
+      bargeInTimerRef.current = null
+    }
+  }
+
+  const stopPlaybackAndTimers = () => {
+    clearTimers()
     abortRef.current?.abort()
-    if (vadTimerRef.current) window.clearInterval(vadTimerRef.current)
+    abortRef.current = null
+    if (audioElRef.current) {
+      audioElRef.current.onended = null
+      audioElRef.current.onerror = null
+      audioElRef.current.pause()
+      audioElRef.current.src = ''
+      audioElRef.current = null
+    }
+  }
+
+  const cleanupAll = () => {
+    stopPlaybackAndTimers()
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
       recorderRef.current.onstop = null
       recorderRef.current.stop()
     }
-    if (audioElRef.current) {
-      audioElRef.current.pause()
-      audioElRef.current.src = ''
-    }
+    recorderRef.current = null
+    analyserRef.current = null
     micStreamRef.current?.getTracks().forEach((t) => t.stop())
+    micStreamRef.current = null
     audioCtxRef.current?.close().catch(() => {})
+    audioCtxRef.current = null
   }
 
-    const playBackendAudio = (blob: Blob, onFinished: () => void) => {
-    if (!isMountedRef.current) return
+  const startBargeInMonitor = () => {
+    if (bargeInTimerRef.current !== null) {
+      window.clearInterval(bargeInTimerRef.current)
+      bargeInTimerRef.current = null
+    }
+    const analyser = analyserRef.current
+    if (!analyser) return
 
-    // Dừng ngay audio trước đó (nếu có) để triệt tiêu hoàn toàn hiện tượng chồng âm/vang
+    const pcmData = new Float32Array(analyser.fftSize)
+    let hotFrames = 0
+
+    bargeInTimerRef.current = window.setInterval(() => {
+      if (!isMountedRef.current || isMutedRef.current) {
+        hotFrames = 0
+        return
+      }
+      const db = computeMicDb(analyser, pcmData)
+      if (db > BARGE_IN_THRESHOLD_DB) {
+        hotFrames += 1
+        if (hotFrames >= BARGE_IN_HOLD_FRAMES) {
+          stopPlaybackAndTimers()
+          startListeningTurn(true)
+        }
+      } else {
+        hotFrames = 0
+      }
+    }, 60)
+  }
+
+  const playBackendAudioStream = async (
+    res: Response,
+    onFinished: () => void,
+    signal?: AbortSignal
+  ) => {
+    if (!isMountedRef.current || signal?.aborted) return
+
+    // Dừng ngay audio/timer trước đó (nếu có) để triệt tiêu hoàn toàn hiện tượng chồng âm/vang
+    if (bargeInTimerRef.current !== null) {
+      window.clearInterval(bargeInTimerRef.current)
+      bargeInTimerRef.current = null
+    }
     if (audioElRef.current) {
+      audioElRef.current.onended = null
+      audioElRef.current.onerror = null
       audioElRef.current.pause()
       audioElRef.current.src = ''
       audioElRef.current = null
     }
 
-    setPhase('speaking')
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
-    audioElRef.current = audio
+    const audio = await playAudioResponseStream(
+      res,
+      {
+        onPlayStart: () => {
+          if (!isMountedRef.current || signal?.aborted) return
+          setPhase('speaking')
+          startBargeInMonitor()
+        },
+        onEnded: () => {
+          if (bargeInTimerRef.current !== null) {
+            window.clearInterval(bargeInTimerRef.current)
+            bargeInTimerRef.current = null
+          }
+          if (audioElRef.current === audio) {
+            audioElRef.current = null
+          }
+          if (isMountedRef.current && !signal?.aborted) {
+            onFinished()
+          }
+        },
+      },
+      signal
+    )
 
-    const done = () => {
-      URL.revokeObjectURL(url)
-      if (audioElRef.current === audio) {
-        audioElRef.current = null
-      }
-      if (isMountedRef.current) onFinished()
+    if (!isMountedRef.current || signal?.aborted) {
+      audio.pause()
+      audio.src = ''
+      return
     }
-    audio.onended = done
-    audio.onerror = done
-    audio.play().catch(done)
+    if (audio.src) {
+      audioElRef.current = audio
+    }
   }
 
-  const startListeningTurn = () => {
-    if (!isMountedRef.current || !micStreamRef.current || !audioCtxRef.current) return
+  const startListeningTurn = (initialHasSpoken = false) => {
+    if (!isMountedRef.current || !micStreamRef.current || !analyserRef.current) return
+    clearTimers()
     setPhase('listening')
 
     const stream = micStreamRef.current
-    const audioCtx = audioCtxRef.current
-    const source = audioCtx.createMediaStreamSource(stream)
-    const analyser = audioCtx.createAnalyser()
-    analyser.fftSize = 512
-    source.connect(analyser)
-
+    const analyser = analyserRef.current
     const pcmData = new Float32Array(analyser.fftSize)
     const chunks: BlobPart[] = []
     const recorder = new MediaRecorder(stream)
     recorderRef.current = recorder
 
-    let hasSpoken = false
-    let speechStartAt = 0
+    let hasSpoken = initialHasSpoken
+    let speechStartAt = initialHasSpoken ? Date.now() - 180 : 0
     let silenceStartAt: number | null = null
 
     recorder.ondataavailable = (e) => {
@@ -96,7 +190,7 @@ export function VoiceCallView({ onEndCall }: VoiceCallViewProps) {
     }
 
     recorder.onstop = async () => {
-      if (vadTimerRef.current) window.clearInterval(vadTimerRef.current)
+      clearTimers()
       setVolumeLevel(0)
       if (!isMountedRef.current) return
 
@@ -111,21 +205,37 @@ export function VoiceCallView({ onEndCall }: VoiceCallViewProps) {
       }
 
       setPhase('thinking')
+      const turnController = new AbortController()
+      abortRef.current = turnController
       try {
-        abortRef.current = new AbortController()
-        const { audio, action } = await sendCallTurnAudio(blob, `turn.${ext}`, abortRef.current.signal)
-        if (!isMountedRef.current) return
+        const { response, action, sessionId } = await sendCallTurnAudio(
+          blob,
+          `turn.${ext}`,
+          turnController.signal,
+          sessionIdRef.current
+        )
+        if (!isMountedRef.current || turnController.signal.aborted) return
 
-        if (audio) {
-          playBackendAudio(audio, () => {
-            if (action === 'hangup') onEndCall()
-            else startListeningTurn()
-          })
+        if (sessionId) {
+          sessionIdRef.current = sessionId
+        }
+
+        if (response) {
+          await playBackendAudioStream(
+            response,
+            () => {
+              if (action === 'hangup') onEndCall()
+              else startListeningTurn()
+            },
+            turnController.signal
+          )
+        } else if (action === 'hangup') {
+          onEndCall()
         } else {
           startListeningTurn()
         }
       } catch {
-        if (isMountedRef.current) {
+        if (isMountedRef.current && !turnController.signal.aborted) {
           setTimeout(() => startListeningTurn(), 1000)
         }
       }
@@ -138,13 +248,7 @@ export function VoiceCallView({ onEndCall }: VoiceCallViewProps) {
         setVolumeLevel(0)
         return
       }
-      analyser.getFloatTimeDomainData(pcmData)
-      let sumSq = 0
-      for (let i = 0; i < pcmData.length; i++) {
-        sumSq += pcmData[i] * pcmData[i]
-      }
-      const rms = Math.sqrt(sumSq / pcmData.length)
-      const db = 20 * Math.log10(Math.max(rms, 1e-7))
+      const db = computeMicDb(analyser, pcmData)
       const normalizedVol = Math.min(1, Math.max(0, (db + 55) / 40))
       setVolumeLevel(normalizedVol)
 
@@ -184,19 +288,44 @@ export function VoiceCallView({ onEndCall }: VoiceCallViewProps) {
           stream.getTracks().forEach((t) => t.stop())
           return
         }
-        micStreamRef.current = stream
-        audioCtxRef.current = new AudioContext()
 
-        const greetingBlob = await fetchCallGreetingAudio(controller.signal)
+        const audioCtx = new AudioContext()
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume().catch(() => {})
+        }
+        if (cancelled || !isMountedRef.current) {
+          stream.getTracks().forEach((t) => t.stop())
+          audioCtx.close().catch(() => {})
+          return
+        }
+
+        const source = audioCtx.createMediaStreamSource(stream)
+        const analyser = audioCtx.createAnalyser()
+        analyser.fftSize = 512
+        source.connect(analyser)
+
+        micStreamRef.current = stream
+        audioCtxRef.current = audioCtx
+        analyserRef.current = analyser
+
+        const { response, sessionId } = await fetchCallGreetingAudio(controller.signal)
         if (cancelled || !isMountedRef.current) return
 
-        playBackendAudio(greetingBlob, () => {
-          if (!cancelled && isMountedRef.current) {
-            startListeningTurn()
-          }
-        })
+        if (sessionId) {
+          sessionIdRef.current = sessionId
+        }
+
+        await playBackendAudioStream(
+          response,
+          () => {
+            if (!cancelled && isMountedRef.current) {
+              startListeningTurn()
+            }
+          },
+          controller.signal
+        )
       } catch {
-        if (!cancelled && isMountedRef.current) {
+        if (!cancelled && isMountedRef.current && !controller.signal.aborted) {
           setPhase('error')
         }
       }

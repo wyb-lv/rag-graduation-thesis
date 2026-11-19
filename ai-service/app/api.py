@@ -528,26 +528,64 @@ def speech_to_text(
     return _transcribe(file)
 
 
+def _voice_payload(
+    question: str,
+    top_k: Optional[int],
+    kho: Optional[str],
+    reference_date: Optional[date],
+    khoa: Optional[int],
+    loai_van_ban: Optional[List[str]],
+    session_id: Optional[str],
+) -> AskRequest:
+    """Tao AskRequest tu Form params cua cac endpoint voice va chuyen ValidationError thanh HTTP 422."""
+    try:
+        return AskRequest(
+            question=question,
+            top_k=top_k,
+            kho=kho,
+            reference_date=reference_date,
+            khoa=khoa,
+            loai_van_ban=loai_van_ban,
+            session_id=session_id,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+async def _prepare_rag_chunks(t: _Turn, payload: AskRequest, action: Action, *, voice_mode: bool = False):
+    """Truy van Qdrant va khoi tao stream generator cho /ask/voice/stream va /call/turn."""
+    with _pipeline_errors():
+        hits = await run_in_threadpool(qm.find_hits, action.query or t.question, **_pipeline_kwargs(t, payload))
+        if not hits:
+            return [], iter([qm.NO_RESULT_ANSWER])
+        kw: Dict[str, Any] = {"history": _history(t)} if _history(t) else {}
+        if voice_mode:
+            kw["voice_mode"] = True
+        return hits, qm.generate_answer_stream(t.question, hits, **kw)
+
+
 @app.post(
     "/ask/voice/stream",
     summary="Upload file âm thanh câu hỏi và nhận trực tiếp luồng câu trả lời RAG (SSE)",
 )
-def ask_voice_stream(
+async def ask_voice_stream(
+    request: Request,
     file: UploadFile = File(...),
-    top_k: int = Form(cfg.TOP_K_RERANK),
+    top_k: Optional[int] = Form(None),
     kho: Optional[str] = Form(None),
     reference_date: Optional[date] = Form(None),
     khoa: Optional[int] = Form(None),
     loai_van_ban: Optional[List[str]] = Form(None),
+    session_id: Optional[str] = Form(None),
 ):
     """
     Luồng 1 (Upload File Âm thanh -> Hỏi trực tiếp):
       1. Kiểm tra bảo mật file âm thanh (<= 5MB, đúng định dạng audio).
       2. Chuyển âm thanh thành văn bản qua `stt.transcribe_speech`.
-      3. Đưa thẳng văn bản câu hỏi vào pipeline RAG (`find_hits` + `generate_answer_stream`).
+      3. Mở session & chạy Router LLM (`_begin` -> `_plan`) để giữ ngữ cảnh nhiều lượt.
       4. Trả về luồng SSE gồm: `transcription` -> `sources` -> `delta` (nhiều lần) -> `[DONE]`.
     """
-    stt_result = _transcribe(file)
+    stt_result = await run_in_threadpool(_transcribe, file)
     question = (stt_result.get("text") or "").strip()
     if not stt_result.get("is_speech") or not question:
         raise HTTPException(
@@ -555,39 +593,47 @@ def ask_voice_stream(
             detail="Không nhận diện được giọng nói trong file âm thanh. Vui lòng chọn file có tiếng nói rõ ràng.",
         )
 
-    find_kwargs: Dict[str, Any] = {
-        "top_k": top_k,
-        "kho": kho,
-        "reference_date": reference_date,
-    }
-    if khoa is not None:
-        find_kwargs["khoa"] = khoa
-    if loai_van_ban is not None:
-        find_kwargs["loai_van_ban"] = loai_van_ban
+    payload = _voice_payload(question, top_k, kho, reference_date, khoa, loai_van_ban, session_id)
+    t = await _begin(payload, request)
+    try:
+        action = await _plan(t)
+        if action.answer is not None:
+            hits, chunks, in_scope, intent, store = [], iter([action.answer]), action.in_scope, action.intent, action.store
+        else:
+            hits, chunks = await _prepare_rag_chunks(t, payload, action)
+            in_scope, intent, store = bool(hits), Intent.RAG, True
+    except BaseException:
+        _end(t)
+        raise
 
-    with _pipeline_errors():
-        hits = qm.find_hits(question, **find_kwargs)
-        chunks = qm.generate_answer_stream(question, hits) if hits else iter([qm.NO_RESULT_ANSWER])
     sources = [s.model_dump() for s in _sources(hits)]
+    extra = {"session_id": t.sid, **({} if intent is Intent.RAG else {"intent": intent.value})}
 
-    def events():
-        yield _sse({"event": "transcription", "text": question})
-        yield _sse({"event": "sources", "in_scope": bool(hits), "sources": sources})
+    async def events():
         try:
-            for text in chunks:
-                yield _sse({"event": "delta", "text": text})
-        except guard.OutputBlocked:
-            yield _sse({"event": "error", "detail": cfg.GUARD_REFUSAL_ANSWER})
-            return
-        except Exception as e:
-            yield _sse({"event": "error", "detail": f"Loi khi goi LLM: {e}"})
-            return
-        yield _sse("[DONE]")
+            yield _sse({"event": "transcription", "text": t.question})
+            yield _sse({"event": "sources", "in_scope": in_scope, "sources": sources, **extra})
+            parts = []
+            try:
+                async for text in iterate_in_threadpool(chunks):
+                    parts.append(text)
+                    yield _sse({"event": "delta", "text": text})
+            except guard.OutputBlocked:
+                yield _sse({"event": "error", "detail": cfg.GUARD_REFUSAL_ANSWER})
+                return
+            except Exception as e:
+                yield _sse({"event": "error", "detail": f"Loi khi goi LLM: {e}"})
+                return
+            await _remember(t, "".join(parts), intent, store)
+            yield _sse("[DONE]")
+        finally:
+            _end(t)
 
     return StreamingResponse(
         events(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        background=BackgroundTask(_end, t),
     )
 
 
@@ -636,8 +682,11 @@ async def text_to_speech(payload: TTSRequest):
     "/call/greeting",
     summary="Phát câu chào mở đầu khi bắt đầu cuộc gọi thoại (Trả về trực tiếp luồng MP3)",
 )
-async def call_greeting():
-    """Backend chủ động phát câu chào mở đầu cuộc gọi và chỉ thị Frontend chuyển sang trạng thái lắng nghe."""
+async def call_greeting(session_id: Optional[str] = Form(None)):
+    """Backend chủ động phát câu chào mở đầu cuộc gọi, cấp `X-Session-Id` và chỉ thị Frontend chuyển sang trạng thái lắng nghe."""
+    sid = str(uuid.uuid4()) if session_id is None else session.parse_id(session_id)
+    if sid is None:
+        raise HTTPException(status_code=400, detail="session_id phai la UUID")
     return StreamingResponse(
         tts.stream_speech_chunks(text=cfg.CALL_GREETING_TEXT, voice=cfg.TTS_VOICE),
         media_type="audio/mpeg",
@@ -645,31 +694,35 @@ async def call_greeting():
             "Cache-Control": "no-store",
             "X-Accel-Buffering": "no",
             "X-Call-Action": "listen",
-            "Access-Control-Expose-Headers": "X-Call-Action",
+            "X-Session-Id": sid,
+            "Access-Control-Expose-Headers": "X-Call-Action, X-Session-Id",
         },
     )
 
 
 @app.post(
     "/call/turn",
-    summary="Xử lý trọn gói 1 lượt đàm thoại: Audio In -> STT -> RAG (Voice Mode) -> TTS Audio Stream Out",
+    summary="Xử lý trọn gói 1 lượt đàm thoại: Audio In -> STT -> Router/Session -> RAG (Voice Mode) -> TTS Audio Stream Out",
 )
 async def call_turn(
+    request: Request,
     file: UploadFile = File(...),
-    top_k: int = Form(cfg.TOP_K_RERANK),
+    top_k: Optional[int] = Form(None),
     kho: Optional[str] = Form(None),
     reference_date: Optional[date] = Form(None),
     khoa: Optional[int] = Form(None),
     loai_van_ban: Optional[List[str]] = Form(None),
+    session_id: Optional[str] = Form(None),
 ):
     """
     Toàn bộ nghiệp vụ cuộc gọi nằm tại Backend:
       1. Nhận âm thanh từ Mic -> Kiểm tra bảo mật & STT (Groq Whisper + Phonetic Fix HSU).
       2. Nếu không có tiếng nói -> Trả 204 No Content + X-Call-Action: listen để FE nghe tiếp.
-      3. Nếu có câu hỏi -> Truy vấn Qdrant RAG -> Sinh câu trả lời khẩu ngữ (voice_mode=True).
-      4. Cắt từng câu ngay khi LLM đang sinh và stream thẳng ra audio/mpeg về cho Loa.
+      3. Nếu có câu hỏi -> Mở session & chạy Router LLM (`_begin` -> `_plan`).
+      4. Nếu `goodbye` -> Đặt `X-Call-Action: hangup`; nếu RAG -> Truy vấn Qdrant & sinh câu trả lời khẩu ngữ (voice_mode=True).
+      5. Cắt từng câu ngay khi LLM đang sinh, stream thẳng MP3 về cho Loa và lưu lượt hỏi đáp vào session.
     """
-    content, filename = _read_and_validate_audio(file)
+    content, filename = await run_in_threadpool(_read_and_validate_audio, file)
     try:
         stt_result = await run_in_threadpool(stt.transcribe_speech, content, filename)
     except HTTPException:
@@ -684,43 +737,62 @@ async def call_turn(
 
     # Nếu người dùng im lặng hoặc chỉ có tạp âm: trả 204 để FE tự động mở mic nghe tiếp
     if not stt_result.get("is_speech") or not question:
-        return Response(
-            content=b"",
-            status_code=204,
-            headers={
-                "X-Call-Action": "listen",
-                "Access-Control-Expose-Headers": "X-Call-Action",
-            },
-        )
+        silence_headers = {
+            "X-Call-Action": "listen",
+            "Access-Control-Expose-Headers": "X-Call-Action, X-Session-Id",
+        }
+        sid = session.parse_id(session_id) if session_id is not None else None
+        if sid:
+            silence_headers["X-Session-Id"] = sid
+        return Response(content=b"", status_code=204, headers=silence_headers)
 
-    find_kwargs: Dict[str, Any] = {
-        "top_k": top_k,
-        "kho": kho,
-        "reference_date": reference_date,
-    }
-    if khoa is not None:
-        find_kwargs["khoa"] = khoa
-    if loai_van_ban is not None:
-        find_kwargs["loai_van_ban"] = loai_van_ban
+    payload = _voice_payload(question, top_k, kho, reference_date, khoa, loai_van_ban, session_id)
+    t = await _begin(payload, request)
+    try:
+        action = await _plan(t)
+        call_action = "hangup" if action.intent is Intent.GOODBYE else "listen"
+        spoken_parts: List[str] = []
+        if action.answer is not None:
+            audio_iter = tts.stream_speech_chunks(action.answer, voice=cfg.TTS_VOICE)
+            remember_args = (action.answer, action.intent, action.store)
+        else:
+            _, raw_iter = await _prepare_rag_chunks(t, payload, action, voice_mode=True)
 
-    with _pipeline_errors():
-        hits = await run_in_threadpool(qm.find_hits, question, **find_kwargs)
-        text_iter = (
-            qm.generate_answer_stream(question, hits, voice_mode=True)
-            if hits
-            else iter([qm.NO_RESULT_ANSWER])
-        )
+            def capturing_iter():
+                for chunk in raw_iter:
+                    if chunk:
+                        spoken_parts.append(chunk)
+                    yield chunk
+
+            audio_iter = tts.stream_speech_from_text_iter(capturing_iter(), voice=cfg.TTS_VOICE)
+            remember_args = None
+    except BaseException:
+        _end(t)
+        raise
 
     async def audio_stream():
         try:
-            async for mp3_chunk in tts.stream_speech_from_text_iter(text_iter, voice=cfg.TTS_VOICE):
+            async for mp3_chunk in audio_iter:
                 if mp3_chunk:
                     yield mp3_chunk
+            if remember_args is not None:
+                await _remember(t, *remember_args)
+            else:
+                answer_text = "".join(spoken_parts).strip()
+                if answer_text:
+                    await _remember(t, answer_text, Intent.RAG, True)
         except guard.OutputBlocked:
-            async for mp3_chunk in tts.stream_speech_chunks(cfg.GUARD_REFUSAL_ANSWER, voice=cfg.TTS_VOICE):
-                yield mp3_chunk
+            try:
+                async for mp3_chunk in tts.stream_speech_chunks(cfg.GUARD_REFUSAL_ANSWER, voice=cfg.TTS_VOICE):
+                    if mp3_chunk:
+                        yield mp3_chunk
+                await _remember(t, cfg.GUARD_REFUSAL_ANSWER, Intent.BLOCKED, False)
+            except Exception:
+                log.exception("Lỗi khi stream câu từ chối guard trong /call/turn")
         except Exception:
             log.exception("Lỗi khi stream âm thanh trả lời trong /call/turn")
+        finally:
+            _end(t)
 
     return StreamingResponse(
         audio_stream(),
@@ -728,7 +800,9 @@ async def call_turn(
         headers={
             "Cache-Control": "no-store",
             "X-Accel-Buffering": "no",
-            "X-Call-Action": "listen",
-            "Access-Control-Expose-Headers": "X-Call-Action",
+            "X-Call-Action": call_action,
+            "X-Session-Id": t.sid,
+            "Access-Control-Expose-Headers": "X-Call-Action, X-Session-Id",
         },
+        background=BackgroundTask(_end, t),
     )

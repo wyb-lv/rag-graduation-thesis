@@ -195,6 +195,251 @@ export async function askQuestionStream(
   await consumeSseResponse(res, callbacks)
 }
 
+export interface AudioStreamCallbacks {
+  onPlayStart?: () => void
+  onEnded: () => void
+  onBlobCollected?: (blob: Blob) => void
+}
+
+async function playAudioFromBlob(
+  blob: Blob,
+  callbacks: AudioStreamCallbacks,
+  signal?: AbortSignal
+): Promise<HTMLAudioElement> {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError')
+  }
+  if (blob.size === 0) {
+    const emptyAudio = new Audio()
+    callbacks.onEnded()
+    return emptyAudio
+  }
+
+  callbacks.onBlobCollected?.(blob)
+  const objectUrl = URL.createObjectURL(blob)
+  const audio = new Audio(objectUrl)
+  let settled = false
+
+  const cleanup = (notifyEnded: boolean) => {
+    if (settled) return
+    settled = true
+    signal?.removeEventListener('abort', onAbort)
+    audio.onended = null
+    audio.onerror = null
+    URL.revokeObjectURL(objectUrl)
+    if (notifyEnded && !signal?.aborted) {
+      callbacks.onEnded()
+    }
+  }
+
+  const onAbort = () => {
+    audio.pause()
+    audio.src = ''
+    cleanup(false)
+  }
+
+  signal?.addEventListener('abort', onAbort, { once: true })
+  audio.onended = () => cleanup(true)
+  audio.onerror = () => cleanup(true)
+
+  try {
+    await audio.play()
+    if (!signal?.aborted) {
+      callbacks.onPlayStart?.()
+    }
+  } catch {
+    cleanup(true)
+  }
+  return audio
+}
+
+function waitForSourceBufferUpdate(sb: SourceBuffer, signal?: AbortSignal): Promise<void> {
+  if (!sb.updating) return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      sb.removeEventListener('updateend', onEnd)
+      sb.removeEventListener('error', onErr)
+      sb.removeEventListener('abort', onEnd)
+      signal?.removeEventListener('abort', onEnd)
+    }
+    const onEnd = () => {
+      cleanup()
+      resolve()
+    }
+    const onErr = () => {
+      cleanup()
+      reject(new Error('SourceBuffer update failed'))
+    }
+    sb.addEventListener('updateend', onEnd, { once: true })
+    sb.addEventListener('error', onErr, { once: true })
+    sb.addEventListener('abort', onEnd, { once: true })
+    signal?.addEventListener('abort', onEnd, { once: true })
+  })
+}
+
+/**
+ * Phát luồng âm thanh MP3 từ `Response` bằng MediaSource Extensions (MSE) ngay khi chunk đầu tiên về tới,
+ * tự động fallback sang `res.blob()` nếu trình duyệt không hỗ trợ MSE hoặc `addSourceBuffer` lỗi.
+ */
+export async function playAudioResponseStream(
+  res: Response,
+  callbacks: AudioStreamCallbacks,
+  signal?: AbortSignal
+): Promise<HTMLAudioElement> {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError')
+  }
+
+  const canUseMse =
+    typeof MediaSource !== 'undefined' &&
+    MediaSource.isTypeSupported('audio/mpeg') &&
+    Boolean(res.body)
+
+  if (!canUseMse || !res.body) {
+    const blob = await res.blob()
+    return playAudioFromBlob(blob, callbacks, signal)
+  }
+
+  const mediaSource = new MediaSource()
+  const objectUrl = URL.createObjectURL(mediaSource)
+  const audio = new Audio()
+
+  let sourceBuffer: SourceBuffer
+  try {
+    sourceBuffer = await new Promise<SourceBuffer>((resolve, reject) => {
+      const onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      mediaSource.addEventListener(
+        'sourceopen',
+        () => {
+          signal?.removeEventListener('abort', onAbort)
+          try {
+            resolve(mediaSource.addSourceBuffer('audio/mpeg'))
+          } catch (err) {
+            reject(err)
+          }
+        },
+        { once: true }
+      )
+      audio.src = objectUrl
+    })
+  } catch (err) {
+    URL.revokeObjectURL(objectUrl)
+    audio.pause()
+    audio.src = ''
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err
+    }
+    const blob = await res.blob()
+    return playAudioFromBlob(blob, callbacks, signal)
+  }
+
+  const reader = res.body.getReader()
+  const collectedChunks: Uint8Array<ArrayBuffer>[] = []
+  let settled = false
+  let aborted = false
+  let hasStartedPlayback = false
+
+  const finish = (notifyEnded: boolean) => {
+    if (settled) return
+    settled = true
+    signal?.removeEventListener('abort', onAbort)
+    audio.onended = null
+    audio.onerror = null
+    URL.revokeObjectURL(objectUrl)
+    if (notifyEnded && !aborted && !signal?.aborted) {
+      callbacks.onEnded()
+    }
+  }
+
+  const onAbort = () => {
+    aborted = true
+    reader.cancel().catch(() => {})
+    audio.pause()
+    audio.src = ''
+    finish(false)
+  }
+
+  signal?.addEventListener('abort', onAbort, { once: true })
+  audio.onended = () => finish(true)
+  audio.onerror = () => finish(true)
+
+  const pump = async () => {
+    try {
+      while (true) {
+        if (aborted || settled || signal?.aborted) break
+        const { done, value } = await reader.read()
+        if (aborted || settled || signal?.aborted) break
+
+        if (done) {
+          await waitForSourceBufferUpdate(sourceBuffer, signal)
+          if (!aborted && !signal?.aborted && mediaSource.readyState === 'open') {
+            mediaSource.endOfStream()
+          }
+          if (!aborted && !signal?.aborted && callbacks.onBlobCollected && collectedChunks.length > 0) {
+            callbacks.onBlobCollected(new Blob(collectedChunks, { type: 'audio/mpeg' }))
+          }
+          if (!hasStartedPlayback) {
+            finish(true)
+          }
+          break
+        }
+
+        if (!value || value.byteLength === 0) continue
+
+        const safeChunk = new Uint8Array(value)
+        if (callbacks.onBlobCollected) {
+          collectedChunks.push(safeChunk)
+        }
+
+        await waitForSourceBufferUpdate(sourceBuffer, signal)
+        if (aborted || signal?.aborted || mediaSource.readyState !== 'open') break
+
+        sourceBuffer.appendBuffer(safeChunk)
+        await waitForSourceBufferUpdate(sourceBuffer, signal)
+
+        if (!hasStartedPlayback) {
+          hasStartedPlayback = true
+          if (!aborted && !signal?.aborted) {
+            audio
+              .play()
+              .then(() => {
+                if (!aborted && !signal?.aborted) {
+                  callbacks.onPlayStart?.()
+                }
+              })
+              .catch(() => {
+                finish(true)
+              })
+          }
+        }
+      }
+    } catch (err) {
+      if (!aborted && !signal?.aborted) {
+        console.warn('[AudioStream] Lỗi stream MSE:', err)
+        if (hasStartedPlayback && mediaSource.readyState === 'open') {
+          try {
+            mediaSource.endOfStream()
+          } catch {
+            finish(true)
+          }
+        } else {
+          finish(true)
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {})
+    }
+  }
+
+  void pump()
+  return audio
+}
+
 /**
  * Luồng 1: Upload file âm thanh -> Gọi thẳng POST /ask/voice/stream
  * Server nhận file âm thanh, tách chữ (STT) và gọi trực tiếp tới luồng RAG stream rồi trả về SSE.
@@ -202,13 +447,17 @@ export async function askQuestionStream(
 export async function askVoiceStream(
   audioFile: File | Blob,
   callbacks: StreamCallbacks,
-  options: AskOptions = {}
+  options: AskOptions = {},
+  sessionId?: string
 ): Promise<void> {
   const { signal, top_k, kho, reference_date } = options
 
   const formData = new FormData()
   const filename = audioFile instanceof File ? audioFile.name : 'voice_message.wav'
   formData.append('file', audioFile, filename)
+  const khoa = getKhoa()
+  if (khoa !== undefined) formData.append('khoa', String(khoa))
+  if (sessionId) formData.append('session_id', sessionId)
   if (top_k !== undefined) formData.append('top_k', String(top_k))
   if (kho) formData.append('kho', kho)
   if (reference_date) formData.append('reference_date', reference_date)
@@ -242,9 +491,9 @@ export async function transcribeAudio(audio: Blob | File, filename = 'recording.
 }
 
 /**
- * Luồng 3: Đọc nội dung câu trả lời của AI qua POST /tts (trả về MP3 Blob).
+ * Luồng 3: Gọi POST /tts và trả về `Response` để caller có thể phát trực tiếp theo luồng (hoặc `null` nếu 204).
  */
-export async function synthesizeSpeech(text: string, signal?: AbortSignal): Promise<Blob> {
+export async function synthesizeSpeechResponse(text: string, signal?: AbortSignal): Promise<Response | null> {
   const res = await authFetch(buildAiUrl('/tts'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -252,37 +501,55 @@ export async function synthesizeSpeech(text: string, signal?: AbortSignal): Prom
     signal,
   })
 
-  if (res.status === 204) throw new Error('Không có nội dung văn bản để đọc.')
+  if (res.status === 204) return null
   await assertOk(res, 'Lỗi tổng hợp giọng nói')
+  return res
+}
+
+/**
+ * Luồng 3 (tương thích ngược): Đọc nội dung câu trả lời của AI qua POST /tts (trả về MP3 Blob).
+ */
+export async function synthesizeSpeech(text: string, signal?: AbortSignal): Promise<Blob> {
+  const res = await synthesizeSpeechResponse(text, signal)
+  if (!res) throw new Error('Không có nội dung văn bản để đọc.')
   return res.blob()
 }
 
 /**
- * Bắt đầu cuộc gọi: Nhận luồng âm thanh câu chào mở đầu từ Backend (POST /call/greeting).
+ * Bắt đầu cuộc gọi: Nhận luồng âm thanh câu chào mở đầu và `X-Session-Id` từ Backend (POST /call/greeting).
  */
-export async function fetchCallGreetingAudio(signal?: AbortSignal): Promise<Blob> {
+export async function fetchCallGreetingAudio(
+  signal?: AbortSignal
+): Promise<{ response: Response; sessionId: string | null }> {
   const res = await authFetch(buildAiUrl('/call/greeting'), {
     method: 'POST',
     signal,
   })
   await assertOk(res, 'Không thể khởi tạo cuộc gọi')
-  return res.blob()
+  return {
+    response: res,
+    sessionId: res.headers.get('X-Session-Id'),
+  }
 }
 
 /**
  * Gửi gói ghi âm lượt nói của người dùng xuống Backend (POST /call/turn)
- * và nhận trực tiếp âm thanh MP3 câu trả lời của AI (hoặc null nếu server trả 204 do khoảng lặng).
+ * và nhận luồng `Response` âm thanh MP3 câu trả lời của AI (hoặc `null` nếu server trả 204 do khoảng lặng).
  */
 export async function sendCallTurnAudio(
   audioBlob: Blob,
   filename = 'turn.webm',
-  signal?: AbortSignal
-): Promise<{ audio: Blob | null; action: string }> {
+  signal?: AbortSignal,
+  sessionId?: string | null
+): Promise<{ response: Response | null; action: string; sessionId: string | null }> {
   const formData = new FormData()
   formData.append('file', audioBlob, filename)
   const khoa = getKhoa()
   if (khoa !== undefined) {
     formData.append('khoa', String(khoa))
+  }
+  if (sessionId) {
+    formData.append('session_id', sessionId)
   }
 
   const res = await authFetch(buildAiUrl('/call/turn'), {
@@ -292,11 +559,11 @@ export async function sendCallTurnAudio(
   })
 
   const action = res.headers.get('X-Call-Action') || 'listen'
+  const nextSessionId = res.headers.get('X-Session-Id') ?? sessionId ?? null
   if (res.status === 204) {
-    return { audio: null, action }
+    return { response: null, action, sessionId: nextSessionId }
   }
   await assertOk(res, 'Lỗi xử lý lượt hội thoại')
-  const audio = await res.blob()
-  return { audio: audio.size > 0 ? audio : null, action }
+  return { response: res, action, sessionId: nextSessionId }
 }
 

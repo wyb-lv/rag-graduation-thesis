@@ -277,11 +277,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setConversations((prev) => [newConv, ...prev])
     }
 
+    const chatId = currentChatId
     let accumulatedContent = ''
     let latestSources: SourceCitation[] = []
 
     try {
       await askVoiceStream(file, {
+        onSession: (sessionId) => sessionIds.current.set(chatId, sessionId),
         onTranscription: (transcribedText) => {
           if (transcribedText) {
             setConversations((prev) =>
@@ -306,7 +308,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             prev.map((msg) => (msg.id === botMsgId ? { ...msg, content: accumulatedContent } : msg))
           )
         },
-      })
+      }, {}, sessionIds.current.get(chatId))
 
       const finalBotMsg: Message = {
         id: botMsgId,
