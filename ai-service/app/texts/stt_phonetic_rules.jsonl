@@ -17,3 +17,49 @@
 {"pattern": "\\bgờ\\s*pê\\s*a\\b", "replace": "GPA", "ignorecase": true}
 {"pattern": "\\btô\\s*ích\\b", "replace": "TOEIC", "ignorecase": true}
 {"pattern": "\\bai\\s*eo(?:\\s*sờ)?\\b", "replace": "IELTS", "ignorecase": true}
+# Thuat ngu, chung chi va bieu mau trong bo 78 van ban HSU
+{"pattern": "\\btính\\s+chĩ\\b", "replace": "tín chỉ", "ignorecase": true}
+{"pattern": "\\bhộc\\s+phần\\b", "replace": "học phần", "ignorecase": true}
+{"pattern": "\\brúc\\s+học\\s+phần\\b", "replace": "rút học phần", "ignorecase": true}
+{"pattern": "\\btích\\s+lủy\\b", "replace": "tích lũy", "ignorecase": true}
+{"pattern": "\\b(?:chẩn\\s+đầu\\s+ra|chuẩn\\s+(?:đào|đâu|đàu)\\s+ra)\\b", "replace": "chuẩn đầu ra", "ignorecase": true}
+{"pattern": "\\b[cx]ê\\s*đê\\s*(?:e\\s*)?rờ\\b", "replace": "CĐR", "ignorecase": true}
+{"pattern": "\\b(?:cố\\s+vẫn|cô\\s+vấn|có\\s+vấn)\\s+học\\s+tập\\b|\\bcố\\s+vấn\\s+(?:hộc\\s+tập|học\\s+tặp|hợp\\s+tập)\\b", "replace": "cố vấn học tập", "ignorecase": true}
+{"pattern": "\\b[cx]ê\\s*vê\\s*hát\\s*tê\\b", "replace": "CVHT", "ignorecase": true}
+{"pattern": "\\b(?:liên|niêm)\\s+chính\\s+học\\s+thuật\\b|\\bliêm\\s+(?:chánh\\s+học\\s+thuật|chính\\s+học\\s+(?:thực|thục))\\b", "replace": "liêm chính học thuật", "ignorecase": true}
+{"pattern": "\\bthực\\s+tặp\\s+(nhận\\s+thức|nghề\\s+nghiệp|tốt\\s+nghiệp|doanh\\s+nghiệp|tích\\s+lũy)\\b", "replace": "thực tập \\1", "ignorecase": true}
+{"pattern": "\\bthực\\s+tập\\s+(?:nhận\\s+thực|nhẫn\\s+thức|nhật\\s+thức|nhân\\s+thức)\\b", "replace": "thực tập nhận thức", "ignorecase": true}
+{"pattern": "\\bhoa\\s+sen\\s+(?:e|ê|i)[-\\s]?(?:lít|líp|list|lit|elite)\\b", "replace": "Hoa Sen Elite", "ignorecase": true}
+{"pattern": "\\bhoa\\s+sen\\s+(?:pờ\\s*lớt|pờ\\s*lút|bờ\\s*lớt|plớt|plus)\\b", "replace": "Hoa Sen Plus", "ignorecase": true}
+{"pattern": "\\b(?:phi[eê]u|phiu)\\s*(?:chíp|chít|tríp|trít|trip)\\b|\\b(?:feel|fill)\\s+trip\\b|\\bfield\\s*trip\\b", "replace": "Field trip", "ignorecase": true}
+{"pattern": "\\b(?:tơ\\s*nít\\s*in|tơn\\s*ít\\s*in|tơ\\s*ni\\s*tin|turn\\s*it\\s*in)\\b", "replace": "Turnitin", "ignorecase": true}
+{"pattern": "\\b(?:tốp|tô|tóp)\\s*ph[ồờơo]\\b|\\btoefl\\b", "replace": "TOEFL", "ignorecase": true}
+{"pattern": "\\b(?:tốc|tóc)\\s*ph[ồờơo]\\b|\\btê\\s*ô\\s*[cx]ê\\s*[eé]p\\s*eo\\b|\\btocfl\\b", "replace": "TOCFL", "ignorecase": true}
+{"pattern": "\\b(?:vi\\s*i\\s*pi\\s*ti|vê\\s*e\\s*(?:pê|pờ)\\s*tê|vê\\s*ép\\s*tê|vept)\\b", "replace": "VEPT", "ignorecase": true}
+{"pattern": "\\b(?:[iy]\\s*ai\\s*ai|e\\s*[iy]\\s*[iy]|ê\\s*[iy]\\s*[iy]|eii)\\b", "replace": "EII", "ignorecase": true}
+{"pattern": "\\b(?:[iy]\\s*ai\\s*[xs][iì]|e\\s*[iy]\\s*[cx]ê|ê\\s*[iy]\\s*[cx]ê|[iy]\\s*ai\\s*xờ|eic)\\b", "replace": "EIC", "ignorecase": true}
+{"pattern": "\\b(?:áp\\s*t[íị][tc]|aptis)\\b", "replace": "APTIS", "ignorecase": true}
+{"pattern": "\\b(?:tô\\s*pích|topik)\\b", "replace": "TOPIK", "ignorecase": true}
+{"pattern": "\\b(?:gi\\s*eo\\s*pi\\s*ti|jlpt)\\b", "replace": "JLPT", "ignorecase": true}
+{"pattern": "\\b[cx]ê\\s*tê\\s*đê\\s*tê\\b", "replace": "CTĐT", "ignorecase": true}
+{"pattern": "\\bđê\\s*ca\\s*hát\\s*pê\\b", "replace": "ĐKHP", "ignorecase": true}
+{"pattern": "\\bgờ\\s*đê\\s*tê\\s*[cx]ê\\b", "replace": "GDTC", "ignorecase": true}
+{"pattern": "\\bchứng\\s+chĩ\\s+quốc\\s+tế\\b", "replace": "chứng chỉ quốc tế", "ignorecase": true}
+{"pattern": "\\bngoại\\s+ngử\\b", "replace": "ngoại ngữ", "ignorecase": true}
+{"pattern": "\\bphúc\\s+khão\\b", "replace": "phúc khảo", "ignorecase": true}
+{"pattern": "\\bmiển\\s+giảm\\b", "replace": "miễn giảm", "ignorecase": true}
+{"pattern": "\\bcảnh\\s+(?:bảo\\s+học\\s+vụ|báo\\s+hộc\\s+vụ)\\b", "replace": "cảnh báo học vụ", "ignorecase": true}
+{"pattern": "\\bthan\\s+điểm\\s+(4|10|chữ)\\b", "replace": "thang điểm \\1", "ignorecase": true}
+{"pattern": "\\bđiểm\\s+(?:đắp\\s*liu|đúp\\s*liu|vê\\s*đúp)\\b", "replace": "điểm W", "ignorecase": true}
+{"pattern": "\\bbiểu\\s+mẩu\\b", "replace": "biểu mẫu", "ignorecase": true}
+{"pattern": "\\bbê\\s*(?:em|mờ)\\s*(?:không\\s+)?một\\b", "replace": "BM_01", "ignorecase": true}
+{"pattern": "\\bbê\\s*(?:em|mờ)\\s*(?:không\\s+)?hai\\b", "replace": "BM_02", "ignorecase": true}
+{"pattern": "\\bbê\\s*(?:em|mờ)\\s*(?:không\\s+)?ba\\b", "replace": "BM_03", "ignorecase": true}
+{"pattern": "\\bbê\\s*(?:em|mờ)\\s*(?:không\\s+)?(?:bốn|tư)\\b", "replace": "BM_04", "ignorecase": true}
+{"pattern": "\\bbê\\s*(?:em|mờ)\\s*(?:không\\s+)?năm\\b", "replace": "BM_05", "ignorecase": true}
+{"pattern": "\\bbê\\s*(?:em|mờ)\\s*(?:không\\s+)?sáu\\b", "replace": "BM_06", "ignorecase": true}
+{"pattern": "\\b(?:bê\\s*(?:em|mờ)|bm)[\\s_-]*0?([1-6])", "replace": "BM_0\\1", "ignorecase": true}
+{"pattern": "\\bBM_0([1-6])\\s*(?:a)\\b", "replace": "BM_0\\1A", "ignorecase": true}
+{"pattern": "\\bBM_0([1-6])\\s*(?:b|bê)\\b", "replace": "BM_0\\1B", "ignorecase": true}
+{"pattern": "\\bBM_0([1-6])\\s*(?:c|xê|cê)\\b", "replace": "BM_0\\1C", "ignorecase": true}
+{"pattern": "\\bBM_0([1-6])\\s*(?:d|đê)\\b", "replace": "BM_0\\1D", "ignorecase": true}
