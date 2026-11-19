@@ -34,7 +34,7 @@ export function AccountManagementView() {
     email: '',
     password: '',
     departmentId: 1,
-    role: 'EMPLOYEE' as UserRoleType,
+    role: 'USER' as UserRoleType,
   })
 
   // Soft Delete confirmation modal state
@@ -85,7 +85,7 @@ export function AccountManagementView() {
       email: '',
       password: '',
       departmentId: 1,
-      role: 'EMPLOYEE',
+      role: 'USER',
     })
     setIsModalOpen(true)
   }
@@ -121,7 +121,7 @@ export function AccountManagementView() {
         const createPayload: CreateAccountInput = {
           username: formData.username.trim(),
           email: formData.email.trim(),
-          password: formData.password || '123456',
+          password: formData.password.trim() || '12345678',
           departmentId: formData.departmentId,
           role: formData.role,
         }
@@ -228,8 +228,7 @@ export function AccountManagementView() {
           >
             <option value="ALL">Tất cả vai trò</option>
             <option value="ADMIN">ADMIN</option>
-            <option value="MANAGER">MANAGER</option>
-            <option value="EMPLOYEE">EMPLOYEE</option>
+            <option value="USER">USER</option>
           </select>
 
           {/* Lọc Trạng thái (Active / Soft Deleted) */}
@@ -300,9 +299,7 @@ export function AccountManagementView() {
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-medium border ${
                         acc.role === 'ADMIN'
                           ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-                          : acc.role === 'MANAGER'
-                          ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                          : 'bg-zinc-800 text-zinc-300 border-white/10'
+                          : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
                       }`}>
                         {acc.role}
                       </span>
@@ -419,7 +416,8 @@ export function AccountManagementView() {
                 </label>
                 <input
                   type="password"
-                  placeholder={editingAccount ? '••••••••' : 'Nhập mật khẩu ban đầu'}
+                  minLength={formData.password ? 8 : undefined}
+                  placeholder={editingAccount ? '•••••••• (tối thiểu 8 ký tự)' : 'Mật khẩu tạm (tối thiểu 8 ký tự)'}
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   className="w-full bg-[#202020] border border-white/10 rounded-lg px-3 py-2 text-white placeholder-zinc-500 focus:outline-none focus:border-[#55b9ff]/60"
@@ -447,8 +445,7 @@ export function AccountManagementView() {
                     onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRoleType })}
                     className="w-full bg-[#202020] border border-white/10 rounded-lg px-2.5 py-2 text-white focus:outline-none focus:border-[#55b9ff]/60"
                   >
-                    <option value="EMPLOYEE">EMPLOYEE</option>
-                    <option value="MANAGER">MANAGER</option>
+                    <option value="USER">USER</option>
                     <option value="ADMIN">ADMIN</option>
                   </select>
                 </div>
