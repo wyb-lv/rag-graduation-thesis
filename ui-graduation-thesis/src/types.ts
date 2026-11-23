@@ -39,7 +39,7 @@ export interface Conversation {
 
 export type ActiveView = 'chat' | 'ocr' | 'call' | 'accounts'
 
-export type UserRoleType = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+export type UserRoleType = 'ADMIN' | 'USER'
 
 export interface AccountItem {
   id: number

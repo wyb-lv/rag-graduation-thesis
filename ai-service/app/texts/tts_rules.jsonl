@@ -1,29 +1,129 @@
 # Chuan hoa van ban hoc vu truoc khi doc bang TTS (chay tuan tu). Dinh dang dong nhu stt_phonetic_rules.jsonl.
-# Ky hieu phap quy / van ban hanh chinh HSU, viet tat hoc vu
-{"pattern": "\\bQĐ-ĐHHS\\b", "replace": "Quyết định Đại học Hoa Sen"}
+# Tach so quyet dinh / thong tu co dau gach cheo truoc khi mo rong ma van ban
+{"pattern": "\\b(\\d+)\\s*/\\s*(\\d{4})\\s*/\\s*(?=(?:TT|NĐ|QĐ|VBHN)-)", "replace": "\\1 năm \\2 "}
+{"pattern": "\\b(\\d+)\\s*/\\s*(?=(?:QĐ|TB|NQ|TT|VBHN|NĐ|QC)-)", "replace": "\\1 "}
+# Ky hieu phap quy / van ban hanh chinh HSU & Bo GDDT (chuoi ghep dai dat truoc chuoi con)
+{"pattern": "\\bQĐ\\s*-\\s*ĐHHS\\b", "replace": "Quyết định Đại học Hoa Sen"}
 {"pattern": "\\bTB-ĐHHS\\b", "replace": "Thông báo Đại học Hoa Sen"}
+{"pattern": "\\bTB-ĐTĐH\\b", "replace": "Thông báo Phòng Đào tạo đại học"}
+{"pattern": "\\bNQ-ĐHHS\\b", "replace": "Nghị quyết Đại học Hoa Sen"}
+{"pattern": "\\bQĐ-BGH\\b", "replace": "Quyết định Ban Giám hiệu"}
+{"pattern": "\\bQĐ-BGDĐT\\b", "replace": "Quyết định Bộ Giáo dục và Đào tạo"}
+{"pattern": "\\bTT-BGDĐT\\b", "replace": "Thông tư Bộ Giáo dục và Đào tạo"}
+{"pattern": "\\bVBHN-BGDĐT\\b", "replace": "Văn bản hợp nhất Bộ Giáo dục và Đào tạo"}
+{"pattern": "\\bNĐ-CP\\b", "replace": "Nghị định Chính phủ"}
+{"pattern": "\\bQĐ-TTg\\b", "replace": "Quyết định Thủ tướng Chính phủ"}
+{"pattern": "\\bQĐ-UBND\\b", "replace": "Quyết định Ủy ban nhân dân"}
+{"pattern": "\\bQC-ĐTĐH\\b", "replace": "Quy chế Đào tạo trình độ đại học"}
+{"pattern": "\\bQC-CVHT\\b", "replace": "Quy chế Cố vấn học tập"}
+{"pattern": "\\bQC-TSĐH\\b", "replace": "Quy chế Tuyển sinh đại học"}
+{"pattern": "\\bQC-NH\\b", "replace": "Quy chế Người học"}
+{"pattern": "\\bQC-HB\\b", "replace": "Quy chế Học bổng"}
+{"pattern": "\\bQC-ĐRL\\b", "replace": "Quy chế Điểm rèn luyện"}
+# Don vi, phong ban, trung tam, hoi dong HSU (dat truoc cac tu viet tat ngan)
+{"pattern": "\\bTT\\.\\s*TNSV\\s*&\\s*QHDN\\b", "replace": "Trung tâm Trải nghiệm sinh viên và Quan hệ doanh nghiệp"}
+{"pattern": "\\bTNSV\\s*&\\s*QHDN\\b", "replace": "Trải nghiệm sinh viên và Quan hệ doanh nghiệp"}
+{"pattern": "\\bTT\\.\\s*TT\\s*&\\s*TN-VLSV\\b", "replace": "Trung tâm Truyền thông và Trải nghiệm Việc làm sinh viên"}
+{"pattern": "\\bTT\\.\\s*TN-VLSV\\b", "replace": "Trung tâm Trải nghiệm Việc làm sinh viên"}
+{"pattern": "\\bTN-VLSV\\b", "replace": "Trải nghiệm Việc làm sinh viên"}
+{"pattern": "\\bTT\\.\\s*TT-TV\\b", "replace": "Trung tâm Thông tin Thư viện"}
+{"pattern": "\\bP\\.\\s*KT-ĐBCL\\b", "replace": "Phòng Khảo thí và Đảm bảo chất lượng"}
+{"pattern": "\\bKT-ĐBCL\\b", "replace": "Khảo thí và Đảm bảo chất lượng"}
+{"pattern": "\\bP\\.\\s*ĐBCL\\s*&\\s*KT\\b", "replace": "Phòng Đảm bảo chất lượng và Khảo thí"}
+{"pattern": "\\bP\\.\\s*ĐTĐH\\b", "replace": "Phòng Đào tạo đại học"}
+{"pattern": "\\bP\\.\\s*ĐT\\b", "replace": "Phòng Đào tạo"}
+{"pattern": "\\bP\\.\\s*TC-?KT\\b", "replace": "Phòng Tài chính Kế toán"}
+{"pattern": "\\bTC-KT\\b", "replace": "Tài chính Kế toán"}
+{"pattern": "\\bP\\.\\s*KTTC\\b", "replace": "Phòng Kế toán Tài chính"}
+{"pattern": "\\bP\\.\\s*HCNS\\b", "replace": "Phòng Hành chính Nhân sự"}
+{"pattern": "\\bP\\.\\s*HCQT\\b", "replace": "Phòng Hành chính Quản trị"}
+{"pattern": "\\bP\\.\\s*HTSV\\b", "replace": "Phòng Hỗ trợ sinh viên"}
+{"pattern": "\\bP\\.\\s*ĐBCL\\b", "replace": "Phòng Đảm bảo chất lượng"}
+{"pattern": "\\bP\\.\\s*CNTT\\b", "replace": "Phòng Công nghệ thông tin"}
+{"pattern": "\\bP\\.\\s*QLCSVC\\b", "replace": "Phòng Quản lý Cơ sở vật chất"}
+{"pattern": "\\bP\\.\\s*NS\\b", "replace": "Phòng Nhân sự"}
+{"pattern": "\\bBộ\\s+GD\\s*&\\s*ĐT\\b", "replace": "Bộ Giáo dục và Đào tạo"}
+{"pattern": "\\bBGD\\s*&?\\s*ĐT\\b", "replace": "Bộ Giáo dục và Đào tạo"}
 {"pattern": "\\bĐHHS\\b", "replace": "Đại học Hoa Sen"}
 {"pattern": "\\bHSU\\b", "replace": "Đại học Hoa Sen"}
+{"pattern": "\\bĐTĐH\\b", "replace": "Đào tạo đại học"}
+{"pattern": "\\bBGH\\b", "replace": "Ban Giám hiệu"}
+{"pattern": "\\bHĐKHĐT\\b", "replace": "Hội đồng Khoa học và Đào tạo"}
+{"pattern": "\\bĐVQLCM\\b", "replace": "đơn vị quản lý chuyên môn"}
+{"pattern": "\\bHTTTQL\\b", "replace": "hệ thống thông tin quản lý"}
+{"pattern": "\\bĐBCL\\b", "replace": "Đảm bảo chất lượng"}
+{"pattern": "\\bTNSV\\b", "replace": "Trải nghiệm sinh viên"}
+{"pattern": "\\bQHDN\\b", "replace": "Quan hệ doanh nghiệp"}
+{"pattern": "\\bTP\\.\\s*Hồ\\s+Chí\\s+Minh\\b", "replace": "Thành phố Hồ Chí Minh", "ignorecase": true}
 {"pattern": "\\bTP\\.\\s*HCM\\b", "replace": "Thành phố Hồ Chí Minh", "ignorecase": true}
 {"pattern": "\\bTPHCM\\b", "replace": "Thành phố Hồ Chí Minh", "ignorecase": true}
+# Bieu mau va chuoi viet tat ghep hoc vu (dai dat truoc ngan)
+{"pattern": "\\bBM_?0?(\\d+[A-Z]?)\\s*/\\s*(?=(?:TTTL|CVHT)\\b)", "replace": "biểu mẫu \\1 "}
+{"pattern": "\\bBM_?0?(\\d+[A-Z]?)\\b", "replace": "biểu mẫu \\1"}
+{"pattern": "\\bTTNT\\s*[-/]\\s*TTNN\\b", "replace": "thực tập nhận thức và thực tập nghề nghiệp"}
+{"pattern": "\\bKHHT-CN\\b", "replace": "kế hoạch học tập cá nhân"}
+{"pattern": "\\bKHHT-M\\b", "replace": "kế hoạch học tập mẫu"}
+{"pattern": "\\bGDQP\\s*[-&]\\s*AN\\b", "replace": "Giáo dục quốc phòng và an ninh"}
+{"pattern": "\\bSV\\s*/\\s*HV\\b", "replace": "sinh viên hoặc học viên"}
+# Viet tat hoc vu don le
 {"pattern": "\\bSV\\b", "replace": "sinh viên"}
 {"pattern": "\\bGV\\b", "replace": "giảng viên"}
+{"pattern": "\\bHV\\b", "replace": "học viên"}
 {"pattern": "\\bCNTT\\b", "replace": "Công nghệ thông tin"}
+{"pattern": "\\bCTĐT\\b", "replace": "chương trình đào tạo"}
+{"pattern": "\\bCVHT\\b", "replace": "cố vấn học tập"}
+{"pattern": "\\bGĐCT\\b", "replace": "giám đốc chương trình"}
+{"pattern": "\\bCĐR\\b", "replace": "chuẩn đầu ra"}
+{"pattern": "\\bCCQT\\b", "replace": "chứng chỉ quốc tế"}
+{"pattern": "\\bCCNN\\b", "replace": "chứng chỉ ngoại ngữ quốc tế"}
+{"pattern": "\\bĐKHP\\b", "replace": "đăng ký học phần"}
+{"pattern": "\\bĐKMH\\b", "replace": "đăng ký môn học"}
+{"pattern": "\\bKHHT\\b", "replace": "kế hoạch học tập"}
+{"pattern": "\\bGDQP\\b", "replace": "Giáo dục quốc phòng"}
+{"pattern": "\\bGDTC\\b", "replace": "Giáo dục thể chất"}
+{"pattern": "\\bTTNT\\b", "replace": "thực tập nhận thức"}
+{"pattern": "\\bTTNN\\b", "replace": "thực tập nghề nghiệp"}
+{"pattern": "\\bTTTN\\b", "replace": "thực tập tốt nghiệp"}
+{"pattern": "\\bTTDN\\b", "replace": "thực tập doanh nghiệp"}
+{"pattern": "\\bTTTL\\b", "replace": "thực tập tích lũy"}
+{"pattern": "\\bHTTL\\b", "replace": "hình thức tích lũy"}
 {"pattern": "\\bKLTN\\b", "replace": "khóa luận tốt nghiệp"}
+{"pattern": "\\bĐATN\\b", "replace": "đồ án tốt nghiệp"}
 {"pattern": "\\bĐRL\\b", "replace": "điểm rèn luyện"}
 {"pattern": "\\bĐTBCTL\\b", "replace": "điểm trung bình chung tích lũy"}
 {"pattern": "\\bĐTBHK\\b", "replace": "điểm trung bình học kỳ"}
+{"pattern": "\\bTBTL\\b", "replace": "trung bình tích lũy"}
+{"pattern": "\\bTBMH\\b", "replace": "trung bình môn học"}
+{"pattern": "\\bTBHP\\b", "replace": "trung bình học phần"}
+{"pattern": "\\bTBHK\\b", "replace": "trung bình học kỳ"}
+{"pattern": "\\bKQHT\\b", "replace": "kết quả học tập"}
+{"pattern": "\\bDSSV\\b", "replace": "danh sách sinh viên"}
+{"pattern": "\\bMSSV\\b", "replace": "mã số sinh viên"}
+{"pattern": "\\bXTN\\b", "replace": "xét tốt nghiệp"}
+{"pattern": "\\bNN2\\b", "replace": "ngoại ngữ hai"}
+{"pattern": "\\bLHP\\b", "replace": "lớp học phần"}
+{"pattern": "\\bĐCHP\\b", "replace": "đề cương học phần"}
+{"pattern": "\\bĐCMH\\b", "replace": "đề cương môn học"}
+{"pattern": "\\bVBTN\\b", "replace": "văn bằng tốt nghiệp"}
+{"pattern": "\\bBTN\\b", "replace": "bằng tốt nghiệp"}
+{"pattern": "\\bBSVB\\b", "replace": "bản sao văn bằng"}
+{"pattern": "\\bTHPT\\b", "replace": "trung học phổ thông"}
+{"pattern": "\\bĐHCQ\\b", "replace": "đại học chính quy"}
+{"pattern": "\\bHK\\b", "replace": "học kỳ"}
+{"pattern": "\\bMH\\b", "replace": "môn học"}
 {"pattern": "\\bTC\\b", "replace": "tín chỉ"}
 {"pattern": "\\bHP\\b", "replace": "học phần"}
 # Dau gach cheo trong nam hoc va ma quyet dinh
 {"pattern": "(\\d{4})\\s*-\\s*(\\d{4})", "replace": "\\1 đến \\2"}
 {"pattern": "\\b(\\d+)\\s*/\\s*(QĐ|TB|KH|HD)\\b", "replace": "\\1 \\2"}
+{"pattern": "\\bQĐ\\b", "replace": "Quyết định"}
 # Ky hieu so sanh va phan tram
 {"pattern": ">=\\s*(\\d+(?:[.,]\\d+)?)", "replace": "lớn hơn hoặc bằng \\1"}
 {"pattern": "<=\\s*(\\d+(?:[.,]\\d+)?)", "replace": "nhỏ hơn hoặc bằng \\1"}
+{"pattern": "(?<![\\w<])<\\s*(\\d+(?:[.,]\\d+)?)", "replace": "nhỏ hơn \\1"}
 {"pattern": "(\\d+(?:[.,]\\d+)?)\\s*%", "replace": "\\1 phần trăm"}
-# Doc diem so thap phan kieu 2.5 / 4.0
-{"pattern": "(\\d+)\\.(\\d+)\\s*/\\s*(\\d+)\\.(\\d+)", "replace": "\\1 chấm \\2 trên \\3 chấm \\4"}
+# Doc diem so thap phan kieu 2.5 / 4.0 hoac 3,2 / 4,0
+{"pattern": "(\\d+)[.,](\\d+)\\s*/\\s*(\\d+)[.,](\\d+)", "replace": "\\1 chấm \\2 trên \\3 chấm \\4"}
 # Bo trich dan nguon file RAG trong ngoac vuong (vd: [QuyDinhHocBong.pdf, Dieu 1, Khoan 2])
 {"pattern": "\\[\\s*[^\\]]*?\\.(?:pdf|docx?|txt|xlsx?)[^\\]]*?\\]", "replace": "", "ignorecase": true}
 # Bo ky tu trang tri Markdown lam TTS doc ngac ngu

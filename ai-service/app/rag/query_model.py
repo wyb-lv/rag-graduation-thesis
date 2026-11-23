@@ -29,7 +29,8 @@ VOICE_CALL_SYSTEM_PROMPT = guard.harden_prompt(
     BASE_SYSTEM_PROMPT
     + "\n4. ĐÂY LÀ CUỘC GỌI THOẠI TRỰC TIẾP (người dùng chỉ nghe âm thanh, không nhìn màn hình): "
     "Hãy trả lời ngắn gọn trong 2 đến 3 câu súc tích, đi thẳng vào thông tin quan trọng nhất, "
-    "dùng văn phong nói tự nhiên, KHÔNG dùng danh sách gạch đầu dòng hay ký hiệu Markdown."
+    "dùng văn phong nói tự nhiên, KHÔNG dùng danh sách gạch đầu dòng hay ký hiệu Markdown.",
+    merge=True,
 )
 
 _qdrant = None
